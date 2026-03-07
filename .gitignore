@@ -1,0 +1,17 @@
+node_modules/
+dist/
+
+.env
+.env.local
+.env.*.local
+
+.codex/
+
+coverage/
+
+*.log
+
+data/
+logs/
+run/
+tmp/

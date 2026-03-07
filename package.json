@@ -1,0 +1,29 @@
+{
+  "name": "codex-telegram-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Telegram bridge daemon for Codex, designed for direct Linux server deployment.",
+  "type": "module",
+  "bin": {
+    "codex-telegram-bridge": "./dist/cli/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "cli": "tsx src/cli/main.ts",
+    "start": "tsx src/cli/main.ts start",
+    "stop": "tsx src/cli/main.ts stop",
+    "status": "tsx src/cli/main.ts status",
+    "logs": "tsx src/cli/main.ts logs",
+    "doctor": "tsx src/cli/main.ts doctor"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
