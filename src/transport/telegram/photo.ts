@@ -1,6 +1,8 @@
 import type { TelegramPhotoSize } from "./types.js";
 
-export function pickPreferredPhotoSize(photoSizes: readonly TelegramPhotoSize[]): TelegramPhotoSize {
+export function pickPreferredPhotoSize(
+  photoSizes: readonly TelegramPhotoSize[]
+): TelegramPhotoSize {
   let preferred = photoSizes[0];
   if (!preferred) {
     throw new Error("At least one Telegram photo size is required.");
@@ -24,5 +26,5 @@ export function pickPreferredPhotoSize(photoSizes: readonly TelegramPhotoSize[])
 }
 
 function scorePhotoSize(photoSize: TelegramPhotoSize): number {
-  return (photoSize.file_size ?? 0) + (photoSize.width * photoSize.height);
+  return (photoSize.file_size ?? 0) + photoSize.width * photoSize.height;
 }

@@ -1,7 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
-import { buildPromptWithRollingSummary, isAgentMessageEvent, isThreadStartedEvent, parseCodexJsonEventLine } from "./events.js";
+import {
+  buildPromptWithRollingSummary,
+  isAgentMessageEvent,
+  isThreadStartedEvent,
+  parseCodexJsonEventLine
+} from "./events.js";
 import { getCodexModePolicy } from "./mode.js";
 import type {
   CodexCancelOutcome,
@@ -29,7 +34,9 @@ export async function detectCodexLoginStatus(
 ): Promise<CodexLoginStatus> {
   try {
     const result = await runOneShotCommand(executablePath, ["login", "status"]);
-    const combinedOutput = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+    const combinedOutput = [result.stdout.trim(), result.stderr.trim()]
+      .filter(Boolean)
+      .join("\n");
     const providerMatch = combinedOutput.match(/Logged in using (.+)$/m);
 
     return {
@@ -49,7 +56,9 @@ export async function detectCodexLoginStatus(
   }
 }
 
-export function startCodexRun(options: CodexStartRunOptions): CodexRunController {
+export function startCodexRun(
+  options: CodexStartRunOptions
+): CodexRunController {
   const executablePath = options.executablePath ?? DEFAULT_EXECUTABLE_PATH;
   const events: CodexNormalizedEvent[] = [];
   let activeChild: ChildProcess | null = null;
@@ -74,18 +83,21 @@ export function startCodexRun(options: CodexStartRunOptions): CodexRunController
   };
 
   const completion = (async (): Promise<CodexRunResult> => {
-    const firstAttempt = await launchAttempt({
-      executablePath,
-      options,
-      emit,
-      prompt: options.prompt.trim(),
-      resumeThreadId: options.resumeThreadId ?? null,
-      ...(options.environment ? { environment: options.environment } : {}),
-      cwd: options.runtimeContext.cwd
-    }, (child, exitPromise) => {
-      activeChild = child;
-      activeExitPromise = exitPromise;
-    });
+    const firstAttempt = await launchAttempt(
+      {
+        executablePath,
+        options,
+        emit,
+        prompt: options.prompt.trim(),
+        resumeThreadId: options.resumeThreadId ?? null,
+        ...(options.environment ? { environment: options.environment } : {}),
+        cwd: options.runtimeContext.cwd
+      },
+      (child, exitPromise) => {
+        activeChild = child;
+        activeExitPromise = exitPromise;
+      }
+    );
 
     let exitCode = firstAttempt.exitCode;
     let startedFresh = !options.resumeThreadId;
@@ -98,19 +110,25 @@ export function startCodexRun(options: CodexStartRunOptions): CodexRunController
       latestThreadId = null;
       latestFinalMessage = null;
 
-      const recoveredPrompt = buildPromptWithRollingSummary(options.prompt, options.rollingSummary);
-      const secondAttempt = await launchAttempt({
-        executablePath,
-        options,
-        emit,
-        prompt: recoveredPrompt,
-        resumeThreadId: null,
-        ...(options.environment ? { environment: options.environment } : {}),
-        cwd: options.runtimeContext.cwd
-      }, (child, exitPromise) => {
-        activeChild = child;
-        activeExitPromise = exitPromise;
-      });
+      const recoveredPrompt = buildPromptWithRollingSummary(
+        options.prompt,
+        options.rollingSummary
+      );
+      const secondAttempt = await launchAttempt(
+        {
+          executablePath,
+          options,
+          emit,
+          prompt: recoveredPrompt,
+          resumeThreadId: null,
+          ...(options.environment ? { environment: options.environment } : {}),
+          cwd: options.runtimeContext.cwd
+        },
+        (child, exitPromise) => {
+          activeChild = child;
+          activeExitPromise = exitPromise;
+        }
+      );
 
       exitCode = secondAttempt.exitCode;
     }
@@ -382,7 +400,10 @@ async function runOneShotCommand(
   });
 
   if (exitCode !== 0) {
-    throw new Error([stdout.trim(), stderr.trim()].filter(Boolean).join("\n") || `Command exited with ${exitCode}.`);
+    throw new Error(
+      [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") ||
+        `Command exited with ${exitCode}.`
+    );
   }
 
   return {
@@ -426,14 +447,23 @@ function createSpawnPlan(input: {
   }
 
   if (input.prompt !== null) {
-    env[WINDOWS_PROMPT_ENV] = Buffer.from(input.prompt, "utf8").toString("base64");
+    env[WINDOWS_PROMPT_ENV] = Buffer.from(input.prompt, "utf8").toString(
+      "base64"
+    );
   } else {
     delete env[WINDOWS_PROMPT_ENV];
   }
 
   return {
     command: "powershell.exe",
-    args: ["-Command", buildPowerShellCommand(input.executablePath, input.args, input.prompt !== null)],
+    args: [
+      "-Command",
+      buildPowerShellCommand(
+        input.executablePath,
+        input.args,
+        input.prompt !== null
+      )
+    ],
     options: {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       env,

@@ -49,18 +49,27 @@ class InMemoryPendingPermissionsRepository {
     this.#records = records;
   }
 
-  list(filter: PendingPermissionFilter = {}): readonly PendingPermissionRecord[] {
+  list(
+    filter: PendingPermissionFilter = {}
+  ): readonly PendingPermissionRecord[] {
     this.lastFilter = filter;
     const filtered = this.#records
       .filter((record) => {
         return (
-          (filter.sessionId === undefined || record.sessionId === filter.sessionId) &&
+          (filter.sessionId === undefined ||
+            record.sessionId === filter.sessionId) &&
           (filter.resolved === undefined || record.resolved === filter.resolved)
         );
       })
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.permissionId.localeCompare(right.permissionId));
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) ||
+          left.permissionId.localeCompare(right.permissionId)
+      );
 
-    return typeof filter.limit === "number" ? filtered.slice(0, filter.limit) : filtered;
+    return typeof filter.limit === "number"
+      ? filtered.slice(0, filter.limit)
+      : filtered;
   }
 }
 
@@ -76,10 +85,16 @@ class InMemoryAuditLogsRepository {
 
   list(filter: AuditLogFilter = {}): readonly AuditLogRecord[] {
     this.lastFilter = filter;
-    return this.#records.filter((record) => filter.sessionId === undefined || record.sessionId === filter.sessionId);
+    return this.#records.filter(
+      (record) =>
+        filter.sessionId === undefined || record.sessionId === filter.sessionId
+    );
   }
 
-  listRecentByEventType(sessionId: string, limits: readonly AuditLogEventLimit[]): readonly AuditLogRecord[] {
+  listRecentByEventType(
+    sessionId: string,
+    limits: readonly AuditLogEventLimit[]
+  ): readonly AuditLogRecord[] {
     this.lastSessionId = sessionId;
     this.lastEventLimits = limits;
     const selected: AuditLogRecord[] = [];
@@ -91,13 +106,25 @@ class InMemoryAuditLogsRepository {
 
       selected.push(
         ...this.#records
-          .filter((record) => record.sessionId === sessionId && record.eventType === entry.eventType)
-          .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.auditId - left.auditId)
+          .filter(
+            (record) =>
+              record.sessionId === sessionId &&
+              record.eventType === entry.eventType
+          )
+          .sort(
+            (left, right) =>
+              right.createdAt.localeCompare(left.createdAt) ||
+              right.auditId - left.auditId
+          )
           .slice(0, entry.limit)
       );
     }
 
-    return selected.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.auditId - left.auditId);
+    return selected.sort(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) ||
+        right.auditId - left.auditId
+    );
   }
 }
 
@@ -121,19 +148,53 @@ test("SummaryService builds sections with one audit scan and unresolved approval
     createSessionRecord("session-1")
   ]);
   const pendingPermissions = new InMemoryPendingPermissionsRepository([
-    createPendingPermissionRecord("perm-new", false, "2026-03-06T10:02:00.000Z"),
-    createPendingPermissionRecord("perm-old", false, "2026-03-06T10:01:00.000Z"),
-    createPendingPermissionRecord("perm-resolved", true, "2026-03-06T10:03:00.000Z")
+    createPendingPermissionRecord(
+      "perm-new",
+      false,
+      "2026-03-06T10:02:00.000Z"
+    ),
+    createPendingPermissionRecord(
+      "perm-old",
+      false,
+      "2026-03-06T10:01:00.000Z"
+    ),
+    createPendingPermissionRecord(
+      "perm-resolved",
+      true,
+      "2026-03-06T10:03:00.000Z"
+    )
   ]);
   const auditLogs = new InMemoryAuditLogsRepository([
-    createAuditLog("session-1", "run_cancel", "2026-03-06T10:09:00.000Z", { note: "cancel-1" }),
-    createAuditLog("session-1", "resume_recovery", "2026-03-06T10:08:00.000Z", { note: "resume-1" }),
-    createAuditLog("session-1", "approval_decision", "2026-03-06T10:07:00.000Z", { note: "approval-1" }),
-    createAuditLog("session-1", "user_command", "2026-03-06T10:06:00.000Z", { note: "command-1" }),
-    createAuditLog("session-1", "file_change", "2026-03-06T10:05:00.000Z", { note: "file-1" }),
-    createAuditLog("session-1", "run_cancel", "2026-03-06T10:04:00.000Z", { note: "cancel-2" }),
-    createAuditLog("session-1", "resume_recovery", "2026-03-06T10:03:00.000Z", { note: "resume-2" }),
-    createAuditLog("session-1", "approval_decision", "2026-03-06T10:02:00.000Z", { note: "approval-2" })
+    createAuditLog("session-1", "run_cancel", "2026-03-06T10:09:00.000Z", {
+      note: "cancel-1"
+    }),
+    createAuditLog("session-1", "resume_recovery", "2026-03-06T10:08:00.000Z", {
+      note: "resume-1"
+    }),
+    createAuditLog(
+      "session-1",
+      "approval_decision",
+      "2026-03-06T10:07:00.000Z",
+      { note: "approval-1" }
+    ),
+    createAuditLog("session-1", "user_command", "2026-03-06T10:06:00.000Z", {
+      note: "command-1"
+    }),
+    createAuditLog("session-1", "file_change", "2026-03-06T10:05:00.000Z", {
+      note: "file-1"
+    }),
+    createAuditLog("session-1", "run_cancel", "2026-03-06T10:04:00.000Z", {
+      note: "cancel-2"
+    }),
+    createAuditLog("session-1", "resume_recovery", "2026-03-06T10:03:00.000Z", {
+      note: "resume-2"
+    }),
+    createAuditLog(
+      "session-1",
+      "approval_decision",
+      "2026-03-06T10:02:00.000Z",
+      { note: "approval-2" }
+    )
   ]);
   const service = new SummaryService({
     sessions: sessions as never,

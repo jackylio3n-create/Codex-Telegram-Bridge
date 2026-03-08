@@ -1,5 +1,8 @@
 import type { AppConfig, ConfigIssue } from "../config/index.js";
-import type { FilesystemInspector, VisibleDirectoryPolicy } from "../core/workspace/index.js";
+import type {
+  FilesystemInspector,
+  VisibleDirectoryPolicy
+} from "../core/workspace/index.js";
 import type { BridgeStore } from "../store/types.js";
 
 export type DoctorCheckStatus = "ok" | "warning" | "error" | "skipped";

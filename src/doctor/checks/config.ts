@@ -5,10 +5,18 @@ export function buildConfigChecks(
   configIssues: readonly ConfigIssue[],
   startupIssues: readonly ConfigIssue[]
 ): readonly DoctorCheck[] {
-  const configFieldIssues = configIssues.filter((issue) => !isPathIssue(issue.field));
-  const managedDirectoryIssues = startupIssues.filter((issue) => issue.field.startsWith("paths."));
-  const codexHomeIssues = startupIssues.filter((issue) => issue.field === "codexHome");
-  const workspaceIssues = startupIssues.filter((issue) => issue.field === "defaultWorkspaceRoot");
+  const configFieldIssues = configIssues.filter(
+    (issue) => !isPathIssue(issue.field)
+  );
+  const managedDirectoryIssues = startupIssues.filter((issue) =>
+    issue.field.startsWith("paths.")
+  );
+  const codexHomeIssues = startupIssues.filter(
+    (issue) => issue.field === "codexHome"
+  );
+  const workspaceIssues = startupIssues.filter(
+    (issue) => issue.field === "defaultWorkspaceRoot"
+  );
   const startupBlocked = startupIssues.length === 0 && hasErrors(configIssues);
 
   return [
@@ -74,8 +82,12 @@ function summarizeIssueCheck(
   };
 }
 
-function summarizeIssuesStatus(issues: readonly ConfigIssue[]): DoctorCheckStatus {
-  return issues.some((issue) => issue.severity === "error") ? "error" : "warning";
+function summarizeIssuesStatus(
+  issues: readonly ConfigIssue[]
+): DoctorCheckStatus {
+  return issues.some((issue) => issue.severity === "error")
+    ? "error"
+    : "warning";
 }
 
 function hasErrors(issues: readonly ConfigIssue[]): boolean {
@@ -83,7 +95,11 @@ function hasErrors(issues: readonly ConfigIssue[]): boolean {
 }
 
 function isPathIssue(field: string): boolean {
-  return field.startsWith("paths.") || field === "codexHome" || field === "defaultWorkspaceRoot";
+  return (
+    field.startsWith("paths.") ||
+    field === "codexHome" ||
+    field === "defaultWorkspaceRoot"
+  );
 }
 
 function renderIssue(issue: ConfigIssue): string {

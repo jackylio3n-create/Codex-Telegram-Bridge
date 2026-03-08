@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hashVerificationPassword } from "../../src/security/verification-password.js";
-import { loadAppConfig, redactConfigForDisplay } from "../../src/config/index.js";
+import {
+  loadAppConfig,
+  redactConfigForDisplay
+} from "../../src/config/index.js";
 
 test("loadAppConfig derives the owner Telegram user ID from a single allowlisted user", () => {
   const { config, issues } = loadAppConfig({
@@ -27,10 +30,14 @@ test("loadAppConfig rejects an explicit owner Telegram user ID outside the allow
   });
 
   assert.equal(config.ownerTelegramUserId, "111111111");
-  assert.ok(issues.some((issue) => {
-    return issue.field === "CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"
-      && issue.severity === "error";
-  }));
+  assert.ok(
+    issues.some((issue) => {
+      return (
+        issue.field === "CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID" &&
+        issue.severity === "error"
+      );
+    })
+  );
 });
 
 test("loadAppConfig warns when multiple allowlisted users are configured without an explicit owner", () => {
@@ -43,10 +50,14 @@ test("loadAppConfig warns when multiple allowlisted users are configured without
   });
 
   assert.equal(config.ownerTelegramUserId, null);
-  assert.ok(issues.some((issue) => {
-    return issue.field === "CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"
-      && issue.severity === "warning";
-  }));
+  assert.ok(
+    issues.some((issue) => {
+      return (
+        issue.field === "CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID" &&
+        issue.severity === "warning"
+      );
+    })
+  );
 });
 
 test("loadAppConfig applies privacy-minded defaults and supports overrides", () => {
@@ -118,10 +129,14 @@ test("loadAppConfig rejects an invalid verification password hash", () => {
   });
 
   assert.equal(config.verificationPasswordHash, null);
-  assert.ok(issues.some((issue) => {
-    return issue.field === "CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH"
-      && issue.severity === "error";
-  }));
+  assert.ok(
+    issues.some((issue) => {
+      return (
+        issue.field === "CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH" &&
+        issue.severity === "error"
+      );
+    })
+  );
 });
 
 function createEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {

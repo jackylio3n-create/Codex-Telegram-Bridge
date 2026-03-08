@@ -16,7 +16,10 @@ test("chunkTelegramText prefers splitting on a newline near the limit", () => {
 });
 
 test("chunkTelegramText throws when max length is not positive", () => {
-  assert.throws(() => chunkTelegramText("hello", { maxLength: 0 }), /must be positive/);
+  assert.throws(
+    () => chunkTelegramText("hello", { maxLength: 0 }),
+    /must be positive/
+  );
 });
 
 test("createTelegramPreviewText truncates and appends an ellipsis", () => {

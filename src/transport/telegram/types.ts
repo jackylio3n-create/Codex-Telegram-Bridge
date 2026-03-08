@@ -165,7 +165,9 @@ export interface TelegramIgnoredUpdateResult {
   readonly ignored: TelegramIgnoredUpdate;
 }
 
-export type TelegramUpdateMappingResult = TelegramAcceptedUpdate | TelegramIgnoredUpdateResult;
+export type TelegramUpdateMappingResult =
+  | TelegramAcceptedUpdate
+  | TelegramIgnoredUpdateResult;
 
 export interface TelegramPollingResult {
   readonly previousOffset: number;

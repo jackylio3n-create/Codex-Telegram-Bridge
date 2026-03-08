@@ -23,7 +23,15 @@ import {
 } from "../runtime/bridge/index.js";
 import { parseSetupCommandArgs, runSetupCommand } from "./setup.js";
 
-type CommandName = "help" | "start" | "serve" | "stop" | "status" | "logs" | "doctor" | "setup";
+type CommandName =
+  | "help"
+  | "start"
+  | "serve"
+  | "stop"
+  | "status"
+  | "logs"
+  | "doctor"
+  | "setup";
 
 const HELP_TEXT = [
   "Codex + Telegram Bridge V1 daemon CLI",
@@ -55,7 +63,9 @@ const HELP_TEXT = [
   "  CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE (optional)"
 ].join("\n");
 
-async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
+async function main(
+  argv: readonly string[] = process.argv.slice(2)
+): Promise<number> {
   const parsed = parseMainArguments(argv);
   const command = normalizeCommand(parsed.command);
 
@@ -69,14 +79,21 @@ async function main(argv: readonly string[] = process.argv.slice(2)): Promise<nu
     applyRuntimeEnvironment(runtimeEnvironment.env);
 
     if (runtimeEnvironment.envFilePath) {
-      process.stderr.write(`Using env file: ${runtimeEnvironment.envFilePath}\n`);
+      process.stderr.write(
+        `Using env file: ${runtimeEnvironment.envFilePath}\n`
+      );
     }
   }
 
   switch (command) {
     case "help":
       process.stdout.write(`${HELP_TEXT}\n`);
-      return parsed.command && parsed.command !== "help" && parsed.command !== "--help" && parsed.command !== "-h" ? 1 : 0;
+      return parsed.command &&
+        parsed.command !== "help" &&
+        parsed.command !== "--help" &&
+        parsed.command !== "-h"
+        ? 1
+        : 0;
     case "start":
       return runStart();
     case "serve":
@@ -90,15 +107,23 @@ async function main(argv: readonly string[] = process.argv.slice(2)): Promise<nu
     case "doctor":
       return runDoctorCommand();
     case "setup":
-      return runSetupCommand(parseSetupCommandArgs([
-        ...(parsed.envFilePath ? ["--env-file", parsed.envFilePath] : []),
-        ...parsed.args
-      ]));
+      return runSetupCommand(
+        parseSetupCommandArgs([
+          ...(parsed.envFilePath ? ["--env-file", parsed.envFilePath] : []),
+          ...parsed.args
+        ])
+      );
   }
 }
 
 function normalizeCommand(rawCommand: string | undefined): CommandName {
-  if (rawCommand === undefined || rawCommand === "" || rawCommand === "help" || rawCommand === "--help" || rawCommand === "-h") {
+  if (
+    rawCommand === undefined ||
+    rawCommand === "" ||
+    rawCommand === "help" ||
+    rawCommand === "--help" ||
+    rawCommand === "-h"
+  ) {
     return "help";
   }
 
@@ -162,7 +187,9 @@ function applyRuntimeEnvironment(runtimeEnv: NodeJS.ProcessEnv): void {
 
 async function runStart(): Promise<number> {
   const { config, issues } = loadAppConfig();
-  const startupIssues = await validateStartupEnvironment(config, { createMissingDirectories: true });
+  const startupIssues = await validateStartupEnvironment(config, {
+    createMissingDirectories: true
+  });
   const combinedIssues = [...issues, ...startupIssues];
   if (hasErrors(combinedIssues)) {
     process.stderr.write(`${formatConfigIssues(combinedIssues)}\n`);
@@ -171,7 +198,9 @@ async function runStart(): Promise<number> {
 
   const existingPid = await readPidFile(config.paths.pidFilePath);
   if (existingPid && isProcessRunning(existingPid)) {
-    process.stdout.write(`Bridge daemon is already running (pid ${existingPid}).\n`);
+    process.stdout.write(
+      `Bridge daemon is already running (pid ${existingPid}).\n`
+    );
     return 0;
   }
 
@@ -192,9 +221,15 @@ async function runStart(): Promise<number> {
   );
   child.unref();
 
-  const started = await waitForDaemonStart(config.paths.pidFilePath, config.paths.stateFilePath, 5_000);
+  const started = await waitForDaemonStart(
+    config.paths.pidFilePath,
+    config.paths.stateFilePath,
+    5_000
+  );
   if (!started) {
-    process.stderr.write("Bridge daemon did not report a healthy start within 5 seconds.\n");
+    process.stderr.write(
+      "Bridge daemon did not report a healthy start within 5 seconds.\n"
+    );
     return 1;
   }
 
@@ -206,7 +241,9 @@ async function runStart(): Promise<number> {
 
 async function runServe(): Promise<number> {
   const { config, issues } = loadAppConfig();
-  const startupIssues = await validateStartupEnvironment(config, { createMissingDirectories: true });
+  const startupIssues = await validateStartupEnvironment(config, {
+    createMissingDirectories: true
+  });
   const combinedIssues = [...issues, ...startupIssues];
   if (hasErrors(combinedIssues)) {
     process.stderr.write(`${formatConfigIssues(combinedIssues)}\n`);
@@ -214,8 +251,14 @@ async function runServe(): Promise<number> {
   }
 
   const existingPid = await readPidFile(config.paths.pidFilePath);
-  if (existingPid && existingPid !== process.pid && isProcessRunning(existingPid)) {
-    process.stderr.write(`Bridge daemon is already running (pid ${existingPid}).\n`);
+  if (
+    existingPid &&
+    existingPid !== process.pid &&
+    isProcessRunning(existingPid)
+  ) {
+    process.stderr.write(
+      `Bridge daemon is already running (pid ${existingPid}).\n`
+    );
     return 1;
   }
 
@@ -227,7 +270,9 @@ async function runServe(): Promise<number> {
     filePath: config.paths.logFilePath,
     redactValues: [
       config.telegramBotToken,
-      ...(config.verificationPasswordHash ? [config.verificationPasswordHash] : [])
+      ...(config.verificationPasswordHash
+        ? [config.verificationPasswordHash]
+        : [])
     ]
   });
   const runtime = await BridgeRuntime.create({
@@ -246,8 +291,12 @@ async function runServe(): Promise<number> {
     await runtime.stop();
   };
 
-  const sigintHandler = () => { void shutdown("SIGINT"); };
-  const sigtermHandler = () => { void shutdown("SIGTERM"); };
+  const sigintHandler = () => {
+    void shutdown("SIGINT");
+  };
+  const sigtermHandler = () => {
+    void shutdown("SIGTERM");
+  };
   process.on("SIGINT", sigintHandler);
   process.on("SIGTERM", sigtermHandler);
 
@@ -315,7 +364,9 @@ async function runStatus(): Promise<number> {
   process.stdout.write(`Daemon: ${daemonRunning ? "running" : "stopped"}\n`);
   process.stdout.write(`PID: ${pid ?? "none"}\n`);
   process.stdout.write(`State file: ${config.paths.stateFilePath}\n`);
-  process.stdout.write(`Log file: ${config.paths.logFilePath} (${logFileExists ? "present" : "missing"})\n`);
+  process.stdout.write(
+    `Log file: ${config.paths.logFilePath} (${logFileExists ? "present" : "missing"})\n`
+  );
 
   if (!state) {
     process.stdout.write("Runtime state: missing\n");
@@ -329,10 +380,16 @@ async function runStatus(): Promise<number> {
   process.stdout.write(`Active sessions: ${state.activeSessionCount}\n`);
   process.stdout.write(`Bound chats: ${state.boundChatCount}\n`);
   process.stdout.write(`Last poll: ${state.lastPollAt ?? "never"}\n`);
-  process.stdout.write(`Last successful poll: ${state.lastSuccessfulPollAt ?? "never"}\n`);
-  process.stdout.write(`Last failed poll: ${state.lastFailedPollAt ?? "never"}\n`);
+  process.stdout.write(
+    `Last successful poll: ${state.lastSuccessfulPollAt ?? "never"}\n`
+  );
+  process.stdout.write(
+    `Last failed poll: ${state.lastFailedPollAt ?? "never"}\n`
+  );
   process.stdout.write(`Poll failures: ${state.consecutivePollFailures}\n`);
-  process.stdout.write(`Offset: ${state.previousOffset ?? "?"} -> ${state.currentOffset ?? "?"}\n`);
+  process.stdout.write(
+    `Offset: ${state.previousOffset ?? "?"} -> ${state.currentOffset ?? "?"}\n`
+  );
   process.stdout.write(`Last event: ${state.lastEvent ?? "none"}\n`);
   if (state.lastPollError) {
     process.stdout.write(`Last poll error: ${state.lastPollError}\n`);
@@ -349,7 +406,9 @@ async function runLogs(args: readonly string[]): Promise<number> {
 
   const lineCount = parseLineCount(args[0]);
   if (lineCount === null) {
-    process.stderr.write('Invalid line count. Use "logs" or "logs <positive_number>".\n');
+    process.stderr.write(
+      'Invalid line count. Use "logs" or "logs <positive_number>".\n'
+    );
     return 1;
   }
 
@@ -360,14 +419,18 @@ async function runLogs(args: readonly string[]): Promise<number> {
 
   const logContents = await readFile(config.paths.logFilePath, "utf8");
   const selectedLines = takeLastLines(logContents, lineCount);
-  process.stdout.write(`Showing last ${selectedLines.length} log lines from ${config.paths.logFilePath}\n`);
+  process.stdout.write(
+    `Showing last ${selectedLines.length} log lines from ${config.paths.logFilePath}\n`
+  );
   if (selectedLines.length > 0) {
     process.stdout.write(`${selectedLines.join("\n")}\n`);
   }
   return 0;
 }
 
-function hasErrors(issues: readonly { readonly severity: "error" | "warning" }[]): boolean {
+function hasErrors(
+  issues: readonly { readonly severity: "error" | "warning" }[]
+): boolean {
   return issues.some((issue) => issue.severity === "error");
 }
 
@@ -400,12 +463,23 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function waitForDaemonStart(pidFilePath: string, stateFilePath: string, timeoutMs: number): Promise<boolean> {
+async function waitForDaemonStart(
+  pidFilePath: string,
+  stateFilePath: string,
+  timeoutMs: number
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const pid = await readPidFile(pidFilePath);
     const state = await readBridgeRuntimeState(stateFilePath);
-    if (pid && isProcessRunning(pid) && state && (state.status === "starting" || state.status === "running" || state.status === "error")) {
+    if (
+      pid &&
+      isProcessRunning(pid) &&
+      state &&
+      (state.status === "starting" ||
+        state.status === "running" ||
+        state.status === "error")
+    ) {
       return true;
     }
 
@@ -415,7 +489,10 @@ async function waitForDaemonStart(pidFilePath: string, stateFilePath: string, ti
   return false;
 }
 
-async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs: number
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!isProcessRunning(pid)) {
@@ -428,10 +505,13 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
   return !isProcessRunning(pid);
 }
 
-main().then((exitCode) => {
-  process.exitCode = exitCode;
-}).catch((error: unknown) => {
-  const message = error instanceof Error ? error.stack ?? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+main()
+  .then((exitCode) => {
+    process.exitCode = exitCode;
+  })
+  .catch((error: unknown) => {
+    const message =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });

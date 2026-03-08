@@ -1,13 +1,24 @@
-import type { ApprovalRequestRecord, ApprovalResolutionResult } from "../approval/index.js";
-import type { NormalizedCommandRequest, SessionActorSnapshot } from "../types/index.js";
+import type {
+  ApprovalRequestRecord,
+  ApprovalResolutionResult
+} from "../approval/index.js";
+import type {
+  NormalizedCommandRequest,
+  SessionActorSnapshot
+} from "../types/index.js";
 import type { PromptLanguage } from "../../i18n.js";
 import type {
   AddDirConfirmation,
   SessionAccessScope,
+  WorkspaceMutationOptions,
   WorkspaceIssue,
   WorkspaceSessionState
 } from "../workspace/index.js";
-import type { ChatBindingRecord, SessionOverviewRecord, SessionRecord } from "../../store/types.js";
+import type {
+  ChatBindingRecord,
+  SessionOverviewRecord,
+  SessionRecord
+} from "../../store/types.js";
 
 export type BridgeCommandStatus = "ok" | "rejected" | "confirmation_required";
 
@@ -42,7 +53,7 @@ export interface CommandExecutionResult<TData = unknown> {
 export interface CommandsServiceOptions {
   readonly defaultWorkspaceRoot: string;
   readonly sessionIdFactory?: () => string;
-  readonly workspaceMutationOptions?: import("../workspace/index.js").WorkspaceMutationOptions;
+  readonly workspaceMutationOptions?: WorkspaceMutationOptions;
   readonly statusTextProvider?: () => Promise<string> | string;
   readonly reasoningConfigService?: {
     readonly supportedValues: readonly string[];

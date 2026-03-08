@@ -20,27 +20,37 @@ export interface TelegramBotClientOptions {
 }
 
 export class TelegramBotClient {
-  readonly #botToken: string;
   readonly #apiBaseUrl: string;
   readonly #fileBaseUrl: string;
   readonly #fetch: TelegramFetch;
 
   constructor(options: TelegramBotClientOptions) {
-    this.#botToken = options.botToken;
     this.#apiBaseUrl = `${options.apiBaseUrl ?? "https://api.telegram.org"}/bot${options.botToken}`;
     this.#fileBaseUrl = `${options.fileBaseUrl ?? "https://api.telegram.org"}/file/bot${options.botToken}`;
     this.#fetch = options.fetchImplementation ?? fetch;
   }
 
-  async getUpdates(options: TelegramGetUpdatesOptions = {}): Promise<readonly TelegramUpdate[]> {
-    return this.#callApi<readonly TelegramUpdate[]>("getUpdates", {
-      ...(typeof options.offset === "number" ? { offset: options.offset } : {}),
-      ...(typeof options.timeoutSeconds === "number" ? { timeout: options.timeoutSeconds } : {}),
-      ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
-      ...(options.allowedUpdates ? { allowed_updates: [...options.allowedUpdates] } : {})
-    }, {
-      ...(options.signal ? { signal: options.signal } : {})
-    });
+  async getUpdates(
+    options: TelegramGetUpdatesOptions = {}
+  ): Promise<readonly TelegramUpdate[]> {
+    return this.#callApi<readonly TelegramUpdate[]>(
+      "getUpdates",
+      {
+        ...(typeof options.offset === "number"
+          ? { offset: options.offset }
+          : {}),
+        ...(typeof options.timeoutSeconds === "number"
+          ? { timeout: options.timeoutSeconds }
+          : {}),
+        ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
+        ...(options.allowedUpdates
+          ? { allowed_updates: [...options.allowedUpdates] }
+          : {})
+      },
+      {
+        ...(options.signal ? { signal: options.signal } : {})
+      }
+    );
   }
 
   async sendMessage(
@@ -100,7 +110,9 @@ export class TelegramBotClient {
   async downloadFile(filePath: string): Promise<Uint8Array> {
     const response = await this.#fetch(`${this.#fileBaseUrl}/${filePath}`);
     if (!response.ok) {
-      throw new Error(`Telegram file download failed with HTTP ${response.status}.`);
+      throw new Error(
+        `Telegram file download failed with HTTP ${response.status}.`
+      );
     }
 
     const arrayBuffer = await response.arrayBuffer();
@@ -127,9 +139,11 @@ export class TelegramBotClient {
       throw new Error(`Telegram API HTTP ${response.status} for ${method}.`);
     }
 
-    const parsed = await response.json() as TelegramApiResponse<TResult>;
+    const parsed = (await response.json()) as TelegramApiResponse<TResult>;
     if (!parsed.ok || parsed.result === undefined) {
-      throw new Error(parsed.description ?? `Telegram API error for ${method}.`);
+      throw new Error(
+        parsed.description ?? `Telegram API error for ${method}.`
+      );
     }
 
     return parsed.result;

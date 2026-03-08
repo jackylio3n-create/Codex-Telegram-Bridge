@@ -13,10 +13,15 @@ export class SessionActor {
   private snapshot: SessionActorSnapshot;
   private tail: Promise<void> = Promise.resolve();
 
-  public constructor(sessionId: string, initialSnapshot?: SessionActorSnapshot) {
+  public constructor(
+    sessionId: string,
+    initialSnapshot?: SessionActorSnapshot
+  ) {
     const snapshot = initialSnapshot ?? createInitialSessionSnapshot(sessionId);
     if (snapshot.sessionId !== sessionId) {
-      throw new Error(`SessionActor snapshot session mismatch: expected ${sessionId}, got ${snapshot.sessionId}.`);
+      throw new Error(
+        `SessionActor snapshot session mismatch: expected ${sessionId}, got ${snapshot.sessionId}.`
+      );
     }
 
     this.snapshot = { ...snapshot };
@@ -58,7 +63,10 @@ export class SessionActor {
       }
     });
 
-    this.tail = execution.then(() => undefined, () => undefined);
+    this.tail = execution.then(
+      () => undefined,
+      () => undefined
+    );
     return execution;
   }
 }

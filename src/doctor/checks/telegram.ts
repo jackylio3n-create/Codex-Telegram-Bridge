@@ -1,7 +1,9 @@
 import { TelegramBotClient } from "../../transport/telegram/index.js";
 import type { DoctorCheck } from "../types.js";
 
-export async function buildTelegramCheck(botToken: string): Promise<DoctorCheck> {
+export async function buildTelegramCheck(
+  botToken: string
+): Promise<DoctorCheck> {
   const client = new TelegramBotClient({ botToken });
 
   try {

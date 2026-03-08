@@ -7,7 +7,9 @@ import type {
   SessionRunState
 } from "../types/index.js";
 
-export function createInitialSessionSnapshot(sessionId: string): SessionActorSnapshot {
+export function createInitialSessionSnapshot(
+  sessionId: string
+): SessionActorSnapshot {
   return {
     sessionId,
     runState: "idle",
@@ -20,8 +22,14 @@ export function createInitialSessionSnapshot(sessionId: string): SessionActorSna
   };
 }
 
-export function isSessionStateActiveForCommandGate(runState: SessionRunState): boolean {
-  return runState === "running" || runState === "waiting_approval" || runState === "cancelling";
+export function isSessionStateActiveForCommandGate(
+  runState: SessionRunState
+): boolean {
+  return (
+    runState === "running" ||
+    runState === "waiting_approval" ||
+    runState === "cancelling"
+  );
 }
 
 export function reduceSessionEvent(
@@ -46,7 +54,12 @@ export function reduceSessionEvent(
       };
     case "run_started":
       if (isSessionStateActiveForCommandGate(snapshot.runState)) {
-        return rejectEvent(baseline, event, "run_already_active", "A run is already active for this session.");
+        return rejectEvent(
+          baseline,
+          event,
+          "run_already_active",
+          "A run is already active for this session."
+        );
       }
 
       return acceptTransition(
@@ -61,11 +74,16 @@ export function reduceSessionEvent(
         event
       );
     case "approval_requested":
-      if (snapshot.runState !== "running" || snapshot.currentRunId !== event.runId) {
+      if (
+        snapshot.runState !== "running" ||
+        snapshot.currentRunId !== event.runId
+      ) {
         return rejectEvent(
           baseline,
           event,
-          snapshot.currentRunId !== event.runId ? "run_id_mismatch" : "run_not_active",
+          snapshot.currentRunId !== event.runId
+            ? "run_id_mismatch"
+            : "run_not_active",
           "Approval can only be requested by the currently running run."
         );
       }
@@ -81,11 +99,21 @@ export function reduceSessionEvent(
       );
     case "approval_resolved":
       if (snapshot.runState !== "waiting_approval") {
-        return rejectEvent(baseline, event, "not_waiting_for_approval", "The session is not waiting for approval.");
+        return rejectEvent(
+          baseline,
+          event,
+          "not_waiting_for_approval",
+          "The session is not waiting for approval."
+        );
       }
 
       if (snapshot.currentRunId !== event.runId) {
-        return rejectEvent(baseline, event, "run_id_mismatch", "Approval decision targets a stale run.");
+        return rejectEvent(
+          baseline,
+          event,
+          "run_id_mismatch",
+          "Approval decision targets a stale run."
+        );
       }
 
       if (snapshot.waitingPermissionId !== event.permissionId) {
@@ -102,7 +130,8 @@ export function reduceSessionEvent(
         {
           ...baseline,
           runState: event.decision === "approve" ? "running" : "failed",
-          currentRunId: event.decision === "approve" ? snapshot.currentRunId : null,
+          currentRunId:
+            event.decision === "approve" ? snapshot.currentRunId : null,
           waitingPermissionId: null,
           cancellationResult: null
         },
@@ -110,7 +139,12 @@ export function reduceSessionEvent(
       );
     case "cancel_requested":
       if (!isSessionStateActiveForCommandGate(snapshot.runState)) {
-        return rejectEvent(baseline, event, "not_cancellable", "The session has no active run to cancel.");
+        return rejectEvent(
+          baseline,
+          event,
+          "not_cancellable",
+          "The session has no active run to cancel."
+        );
       }
 
       return acceptTransition(
@@ -123,7 +157,12 @@ export function reduceSessionEvent(
       );
     case "run_completed":
       if (snapshot.currentRunId !== event.runId) {
-        return rejectEvent(baseline, event, "run_id_mismatch", "Completion targets a stale run.");
+        return rejectEvent(
+          baseline,
+          event,
+          "run_id_mismatch",
+          "Completion targets a stale run."
+        );
       }
 
       return acceptTransition(
@@ -139,7 +178,12 @@ export function reduceSessionEvent(
       );
     case "run_failed":
       if (snapshot.currentRunId !== event.runId) {
-        return rejectEvent(baseline, event, "run_id_mismatch", "Failure targets a stale run.");
+        return rejectEvent(
+          baseline,
+          event,
+          "run_id_mismatch",
+          "Failure targets a stale run."
+        );
       }
 
       return acceptTransition(
@@ -154,7 +198,12 @@ export function reduceSessionEvent(
       );
     case "run_cancelled":
       if (snapshot.currentRunId !== event.runId) {
-        return rejectEvent(baseline, event, "run_id_mismatch", "Cancellation targets a stale run.");
+        return rejectEvent(
+          baseline,
+          event,
+          "run_id_mismatch",
+          "Cancellation targets a stale run."
+        );
       }
 
       return acceptTransition(
@@ -187,7 +236,9 @@ function acceptTransition(
   next: SessionActorSnapshot,
   event: SessionEvent
 ): SessionActorDispatchResult {
-  const effects: NormalizedOutboundMessage[] = [createQueuedEffect(previous.sessionId, event.kind)];
+  const effects: NormalizedOutboundMessage[] = [
+    createQueuedEffect(previous.sessionId, event.kind)
+  ];
 
   if (previous.runState !== next.runState) {
     effects.push({

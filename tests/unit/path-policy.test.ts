@@ -41,36 +41,46 @@ test("validateWorkspaceSession preserves filesystem-derived issues when inspecto
   );
 
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_missing" && issue.field === "allowedDirs")
+    result.issues.some(
+      (issue) => issue.code === "path_missing" && issue.field === "allowedDirs"
+    )
   );
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_missing" && issue.field === "extraAllowedDirs[0]")
+    result.issues.some(
+      (issue) =>
+        issue.code === "path_missing" && issue.field === "extraAllowedDirs[0]"
+    )
   );
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_symlink_escape" && issue.field === "cwd")
+    result.issues.some(
+      (issue) => issue.code === "path_symlink_escape" && issue.field === "cwd"
+    )
   );
 });
 
 test("validateWorkspaceSession reuses filesystem inspections across roots and field checks", async () => {
   const lstatCalls = new Map<string, number>();
   const realpathCalls = new Map<string, number>();
-  const inspector = createInspector({
-    "/workspace": {
-      exists: true,
-      isDirectory: true,
-      isSymbolicLink: false,
-      realpath: "/workspace"
+  const inspector = createInspector(
+    {
+      "/workspace": {
+        exists: true,
+        isDirectory: true,
+        isSymbolicLink: false,
+        realpath: "/workspace"
+      },
+      "/extra": {
+        exists: true,
+        isDirectory: true,
+        isSymbolicLink: false,
+        realpath: "/extra"
+      }
     },
-    "/extra": {
-      exists: true,
-      isDirectory: true,
-      isSymbolicLink: false,
-      realpath: "/extra"
+    {
+      lstatCalls,
+      realpathCalls
     }
-  }, {
-    lstatCalls,
-    realpathCalls
-  });
+  );
 
   const result = await validateWorkspaceSession(
     {
@@ -89,23 +99,32 @@ test("validateWorkspaceSession reuses filesystem inspections across roots and fi
   );
 
   assert.equal(result.issues.length, 0);
-  assert.deepEqual([...lstatCalls.entries()], [
-    ["/workspace", 1],
-    ["/extra", 1]
-  ]);
-  assert.deepEqual([...realpathCalls.entries()], [
-    ["/workspace", 1],
-    ["/extra", 1]
-  ]);
+  assert.deepEqual(
+    [...lstatCalls.entries()],
+    [
+      ["/workspace", 1],
+      ["/extra", 1]
+    ]
+  );
+  assert.deepEqual(
+    [...realpathCalls.entries()],
+    [
+      ["/workspace", 1],
+      ["/extra", 1]
+    ]
+  );
 });
 
 function createInspector(
-  entries: Record<string, {
-    readonly exists: boolean;
-    readonly isDirectory: boolean;
-    readonly isSymbolicLink: boolean;
-    readonly realpath: string;
-  }>,
+  entries: Record<
+    string,
+    {
+      readonly exists: boolean;
+      readonly isDirectory: boolean;
+      readonly isSymbolicLink: boolean;
+      readonly realpath: string;
+    }
+  >,
   recorder?: {
     readonly lstatCalls: Map<string, number>;
     readonly realpathCalls: Map<string, number>;
@@ -137,7 +156,10 @@ function createInspector(
   };
 }
 
-function incrementCallCount(counter: Map<string, number> | undefined, targetPath: string): void {
+function incrementCallCount(
+  counter: Map<string, number> | undefined,
+  targetPath: string
+): void {
   if (!counter) {
     return;
   }

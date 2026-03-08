@@ -33,7 +33,10 @@ test("sessions.save and sessions.update return the persisted record shape withou
     assert.equal(updated.rollingSummary, "summary");
     assert.equal(updated.createdAt, "2026-03-06T12:00:00.000Z");
     assert.equal(updated.updatedAt, "2026-03-06T12:05:00.000Z");
-    assert.equal(harness.store.sessions.get("session-1")?.cwd, "/workspaces/shared");
+    assert.equal(
+      harness.store.sessions.get("session-1")?.cwd,
+      "/workspaces/shared"
+    );
   } finally {
     await harness.dispose();
   }
@@ -131,7 +134,10 @@ test("sessions.listOverview returns lightweight rows ordered without hydrating r
         }
       ]
     );
-    assert.equal("rollingSummary" in (overview[0] as Record<string, unknown>), false);
+    assert.equal(
+      "rollingSummary" in (overview[0] as Record<string, unknown>),
+      false
+    );
   } finally {
     await harness.dispose();
   }
@@ -176,7 +182,10 @@ test("pending permission create and resolve return updated records while preserv
     assert.equal(resolved?.resolved, true);
     assert.equal(resolved?.resolution, "approved");
     assert.equal(resolved?.resolvedAt, "2026-03-06T12:01:00.000Z");
-    assert.equal(harness.store.pendingPermissions.get("perm-1")?.resolution, "approved");
+    assert.equal(
+      harness.store.pendingPermissions.get("perm-1")?.resolution,
+      "approved"
+    );
   } finally {
     await harness.dispose();
   }
@@ -268,7 +277,10 @@ test("telegram user auth tracks first contact, resets on verify, and bans after 
       selectedAt: "2026-03-06T12:02:30.000Z"
     });
     assert.equal(localized.preferredLanguage, "zh");
-    assert.equal(harness.store.telegramUserAuth.findByChatId("chat-1")?.userId, "user-1");
+    assert.equal(
+      harness.store.telegramUserAuth.findByChatId("chat-1")?.userId,
+      "user-1"
+    );
 
     harness.store.telegramUserAuth.getOrCreateFirstSeen({
       userId: "user-2",
@@ -424,9 +436,18 @@ test("pending permission expirePending marks only expired unresolved rows and re
     );
 
     assert.deepEqual(expiredIds, ["perm-expired"]);
-    assert.equal(harness.store.pendingPermissions.get("perm-expired")?.resolution, "expired");
-    assert.equal(harness.store.pendingPermissions.get("perm-expired")?.resolvedAt, "2026-03-06T12:10:00.000Z");
-    assert.equal(harness.store.pendingPermissions.get("perm-future")?.resolved, false);
+    assert.equal(
+      harness.store.pendingPermissions.get("perm-expired")?.resolution,
+      "expired"
+    );
+    assert.equal(
+      harness.store.pendingPermissions.get("perm-expired")?.resolvedAt,
+      "2026-03-06T12:10:00.000Z"
+    );
+    assert.equal(
+      harness.store.pendingPermissions.get("perm-future")?.resolved,
+      false
+    );
   } finally {
     await harness.dispose();
   }
@@ -474,14 +495,18 @@ test("session summaries pruneToMaxPerSession keeps only the latest rows per sess
 
     assert.equal(deleted, 2);
     assert.deepEqual(
-      harness.store.sessionSummaries.list({ sessionId: "session-1", limit: 10 }).map((entry) => entry.content),
+      harness.store.sessionSummaries
+        .list({ sessionId: "session-1", limit: 10 })
+        .map((entry) => entry.content),
       [
         "session-1-2026-03-06T12:02:00.000Z",
         "session-1-2026-03-06T12:01:00.000Z"
       ]
     );
     assert.deepEqual(
-      harness.store.sessionSummaries.list({ sessionId: "session-2", limit: 10 }).map((entry) => entry.content),
+      harness.store.sessionSummaries
+        .list({ sessionId: "session-2", limit: 10 })
+        .map((entry) => entry.content),
       [
         "session-2-2026-03-06T12:05:00.000Z",
         "session-2-2026-03-06T12:04:00.000Z"
@@ -530,7 +555,11 @@ test("store runCleanup prunes historical approvals, audit rows, and summaries to
       expiresAt: "2026-03-04T12:00:00.000Z",
       createdAt: "2026-03-04T12:00:00.000Z"
     });
-    harness.store.pendingPermissions.resolve("perm-resolved-old", "approved", "2026-03-04T13:00:00.000Z");
+    harness.store.pendingPermissions.resolve(
+      "perm-resolved-old",
+      "approved",
+      "2026-03-04T13:00:00.000Z"
+    );
     harness.store.pendingPermissions.create({
       permissionId: "perm-resolved-new",
       sessionId: "session-1",
@@ -543,7 +572,11 @@ test("store runCleanup prunes historical approvals, audit rows, and summaries to
       expiresAt: "2026-03-06T12:00:00.000Z",
       createdAt: "2026-03-06T12:00:00.000Z"
     });
-    harness.store.pendingPermissions.resolve("perm-resolved-new", "denied", "2026-03-06T12:30:00.000Z");
+    harness.store.pendingPermissions.resolve(
+      "perm-resolved-new",
+      "denied",
+      "2026-03-06T12:30:00.000Z"
+    );
 
     harness.store.auditLogs.append({
       sessionId: "session-1",
@@ -594,7 +627,10 @@ test("store runCleanup prunes historical approvals, audit rows, and summaries to
       deletedAuditRows: 1
     });
     assert.deepEqual(
-      harness.store.pendingPermissions.list().map((entry) => entry.permissionId).sort(),
+      harness.store.pendingPermissions
+        .list()
+        .map((entry) => entry.permissionId)
+        .sort(),
       ["perm-resolved-new"]
     );
     assert.deepEqual(
@@ -604,7 +640,9 @@ test("store runCleanup prunes historical approvals, audit rows, and summaries to
       ["audit-3", "audit-2"]
     );
     assert.deepEqual(
-      harness.store.sessionSummaries.list({ sessionId: "session-1", limit: 10 }).map((entry) => entry.content),
+      harness.store.sessionSummaries
+        .list({ sessionId: "session-1", limit: 10 })
+        .map((entry) => entry.content),
       ["summary-3"]
     );
   } finally {
@@ -612,13 +650,17 @@ test("store runCleanup prunes historical approvals, audit rows, and summaries to
   }
 });
 
-async function createStoreHarness(options: {
-  readonly clock?: () => Date;
-} = {}): Promise<{
+async function createStoreHarness(
+  options: {
+    readonly clock?: () => Date;
+  } = {}
+): Promise<{
   readonly store: BridgeStore;
   dispose(): Promise<void>;
 }> {
-  const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-store-"));
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-store-")
+  );
   const store = await createBridgeStore({
     databaseFilePath: join(tempRoot, "bridge.sqlite3"),
     ...(options.clock ? { clock: options.clock } : {})

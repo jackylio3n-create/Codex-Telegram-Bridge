@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PromptLanguage } from "../../i18n.js";
 import { selectText } from "../../i18n.js";
-import { ApprovalService } from "../approval/index.js";
+import type { ApprovalService } from "../approval/index.js";
 import {
   buildPersistedSessionActorSnapshot,
   isSessionStateActiveForCommandGate,
@@ -24,7 +24,12 @@ import {
   type WorkspaceSessionState
 } from "../workspace/index.js";
 import type { InMemoryRoutingCore } from "../router/index.js";
-import type { BridgeStore, ChatBindingRecord, PendingPermissionRecord, SessionRecord, SessionUpsertInput } from "../../store/types.js";
+import type {
+  BridgeStore,
+  ChatBindingRecord,
+  SessionRecord,
+  SessionUpsertInput
+} from "../../store/types.js";
 import type {
   AddDirCommandData,
   BindCommandData,
@@ -49,7 +54,10 @@ const ACTIVE_COMMAND_BLOCKLIST = new Set<NormalizedCommandRequest["command"]>([
   "scope"
 ]);
 
-type CommandsStore = Pick<BridgeStore, "sessions" | "chatBindings" | "pendingPermissions">;
+type CommandsStore = Pick<
+  BridgeStore,
+  "sessions" | "chatBindings" | "pendingPermissions"
+>;
 
 interface ChatSessionContext {
   readonly binding: ChatBindingRecord | null;
@@ -79,7 +87,9 @@ export class CommandsService {
   readonly #workspaceMutationOptions: WorkspaceMutationOptions;
   readonly #sessionIdFactory: () => string;
   readonly #statusTextProvider: (() => Promise<string> | string) | null;
-  readonly #reasoningConfigService: CommandsServiceOptions["reasoningConfigService"] | null;
+  readonly #reasoningConfigService:
+    | CommandsServiceOptions["reasoningConfigService"]
+    | null;
   readonly #languageResolver: (userId: string) => PromptLanguage;
 
   constructor(
@@ -99,24 +109,42 @@ export class CommandsService {
     this.#languageResolver = options.languageResolver ?? (() => "en");
   }
 
-  async dispatch(command: NormalizedCommandRequest): Promise<CommandExecutionResult> {
+  async dispatch(
+    command: NormalizedCommandRequest
+  ): Promise<CommandExecutionResult> {
     switch (command.command) {
       case "start":
         return this.#executeStart(command.envelope.userId);
       case "help":
         return this.#executeHelp(command.envelope.userId);
       case "status":
-        return this.#executeStatus(command.envelope.chatId, command.envelope.userId);
+        return this.#executeStatus(
+          command.envelope.chatId,
+          command.envelope.userId
+        );
       case "sessions":
-        return this.#executeSessions(command.envelope.chatId, command.envelope.userId);
+        return this.#executeSessions(
+          command.envelope.chatId,
+          command.envelope.userId
+        );
       case "new":
         return this.#executeNew(command);
       case "bind":
         return this.#executeBind(command);
       case "cwd":
-        return this.#executeCwd(command as NormalizedCommandRequest & { readonly command: "cwd"; readonly path: string });
+        return this.#executeCwd(
+          command as NormalizedCommandRequest & {
+            readonly command: "cwd";
+            readonly path: string;
+          }
+        );
       case "adddir":
-        return this.#executeAddDir(command as NormalizedCommandRequest & { readonly command: "adddir"; readonly path: string });
+        return this.#executeAddDir(
+          command as NormalizedCommandRequest & {
+            readonly command: "adddir";
+            readonly path: string;
+          }
+        );
       case "mode":
         return this.#executeMode(command);
       case "stop":
@@ -186,7 +214,10 @@ export class CommandsService {
     };
   }
 
-  async #executeStatus(chatId: string, userId: string): Promise<CommandExecutionResult<StatusCommandData>> {
+  async #executeStatus(
+    chatId: string,
+    userId: string
+  ): Promise<CommandExecutionResult<StatusCommandData>> {
     if (this.#statusTextProvider) {
       return {
         command: "status",
@@ -197,19 +228,26 @@ export class CommandsService {
 
     const context = this.#getChatSessionContext(chatId);
     const pendingApprovals = context.session
-      ? this.#approval.listPendingPermissionsForSession(context.session.sessionId)
+      ? this.#approval.listPendingPermissionsForSession(
+          context.session.sessionId
+        )
       : [];
 
     return {
       command: "status",
       status: "ok",
-      message: context.binding && context.session
-        ? this.#t(
-            userId,
-            `当前绑定到 ${context.session.sessionId}（${context.actorSnapshot?.runState ?? context.session.runState}）。`,
-            `Bound to ${context.session.sessionId} (${context.actorSnapshot?.runState ?? context.session.runState}).`
-          )
-        : this.#t(userId, "当前没有绑定会话。", "No session is currently bound."),
+      message:
+        context.binding && context.session
+          ? this.#t(
+              userId,
+              `当前绑定到 ${context.session.sessionId}（${context.actorSnapshot?.runState ?? context.session.runState}）。`,
+              `Bound to ${context.session.sessionId} (${context.actorSnapshot?.runState ?? context.session.runState}).`
+            )
+          : this.#t(
+              userId,
+              "当前没有绑定会话。",
+              "No session is currently bound."
+            ),
       data: {
         status: {
           binding: context.binding,
@@ -221,26 +259,37 @@ export class CommandsService {
     };
   }
 
-  async #executeSessions(chatId: string, userId: string): Promise<CommandExecutionResult<SessionsCommandData>> {
+  async #executeSessions(
+    chatId: string,
+    userId: string
+  ): Promise<CommandExecutionResult<SessionsCommandData>> {
     const currentBinding = this.#store.chatBindings.get(chatId);
-    const sessions = this.#store.sessions.listOverview().map((session): CommandSessionView => ({
-      session,
-      actorSnapshot: this.#routing.getSessionSnapshot(session.sessionId),
-      isCurrentBinding: currentBinding?.sessionId === session.sessionId
-    }));
+    const sessions = this.#store.sessions.listOverview().map(
+      (session): CommandSessionView => ({
+        session,
+        actorSnapshot: this.#routing.getSessionSnapshot(session.sessionId),
+        isCurrentBinding: currentBinding?.sessionId === session.sessionId
+      })
+    );
 
     return {
       command: "sessions",
       status: "ok",
-      message: sessions.length === 0
-        ? this.#t(userId, "还没有创建任何会话。", "No sessions have been created yet.")
-        : sessions
-            .map((entry) => {
-              const prefix = entry.isCurrentBinding ? "* " : "- ";
-              const state = entry.actorSnapshot?.runState ?? entry.session.runState;
-              return `${prefix}${entry.session.sessionId} | ${entry.session.mode} | ${entry.session.accessScope} | ${entry.session.cwd} | ${state}`;
-            })
-            .join("\n"),
+      message:
+        sessions.length === 0
+          ? this.#t(
+              userId,
+              "还没有创建任何会话。",
+              "No sessions have been created yet."
+            )
+          : sessions
+              .map((entry) => {
+                const prefix = entry.isCurrentBinding ? "* " : "- ";
+                const state =
+                  entry.actorSnapshot?.runState ?? entry.session.runState;
+                return `${prefix}${entry.session.sessionId} | ${entry.session.mode} | ${entry.session.accessScope} | ${entry.session.cwd} | ${state}`;
+              })
+              .join("\n"),
       data: {
         sessions
       }
@@ -250,7 +299,11 @@ export class CommandsService {
   async #executeNew(
     command: Extract<NormalizedCommandRequest, { readonly command: "new" }>
   ): Promise<CommandExecutionResult<NewCommandData>> {
-    const activeRejection = this.#rejectIfActive<NewCommandData>(command.command, command.envelope.chatId, command.envelope.userId);
+    const activeRejection = this.#rejectIfActive<NewCommandData>(
+      command.command,
+      command.envelope.chatId,
+      command.envelope.userId
+    );
     if (activeRejection) {
       return activeRejection;
     }
@@ -281,20 +334,17 @@ export class CommandsService {
     }
 
     const sessionId = command.targetSessionId ?? this.#sessionIdFactory();
-    const routed = await this.#routing.dispatch({
+    const rejected = await this.#dispatchCommandForRejection({
       ...command,
       targetSessionId: sessionId
     });
-    const rejected = this.#findCommandRejection(routed.effects);
     if (rejected) {
-      return {
-        command: "new",
-        status: "rejected",
-        message: rejected.text
-      };
+      return this.#commandRejectedResult("new", rejected.text);
     }
 
-    const saved = this.#store.sessions.save(this.#toSessionUpsertInput(sessionId, workspace.session));
+    const saved = this.#store.sessions.save(
+      this.#toSessionUpsertInput(sessionId, workspace.session)
+    );
     this.#store.chatBindings.save({
       chatId: command.envelope.chatId,
       sessionId
@@ -320,7 +370,11 @@ export class CommandsService {
   async #executeBind(
     command: Extract<NormalizedCommandRequest, { readonly command: "bind" }>
   ): Promise<CommandExecutionResult<BindCommandData>> {
-    const activeRejection = this.#rejectIfActive<BindCommandData>(command.command, command.envelope.chatId, command.envelope.userId);
+    const activeRejection = this.#rejectIfActive<BindCommandData>(
+      command.command,
+      command.envelope.chatId,
+      command.envelope.userId
+    );
     if (activeRejection) {
       return activeRejection;
     }
@@ -338,15 +392,13 @@ export class CommandsService {
       };
     }
 
-    this.#routing.registerSession(command.targetSessionId, buildPersistedSessionActorSnapshot(this.#store, session));
-    const routed = await this.#routing.dispatch(command);
-    const rejected = this.#findCommandRejection(routed.effects);
+    this.#routing.registerSession(
+      command.targetSessionId,
+      buildPersistedSessionActorSnapshot(this.#store, session)
+    );
+    const rejected = await this.#dispatchCommandForRejection(command);
     if (rejected) {
-      return {
-        command: "bind",
-        status: "rejected",
-        message: rejected.text
-      };
+      return this.#commandRejectedResult("bind", rejected.text);
     }
 
     this.#store.chatBindings.save({
@@ -369,11 +421,16 @@ export class CommandsService {
   }
 
   async #executeCwd(
-    command: NormalizedCommandRequest & { readonly command: "cwd"; readonly path: string }
+    command: NormalizedCommandRequest & {
+      readonly command: "cwd";
+      readonly path: string;
+    }
   ): Promise<CommandExecutionResult> {
-    const resolved = this.#requireBoundSession(command.command, command.envelope.chatId, command.envelope.userId, {
-      rejectWhenActive: true
-    });
+    const resolved = this.#requireInactiveBoundSession(
+      command.command,
+      command.envelope.chatId,
+      command.envelope.userId
+    );
     if (!resolved.ok) {
       return resolved.result;
     }
@@ -415,11 +472,16 @@ export class CommandsService {
   }
 
   async #executeAddDir(
-    command: NormalizedCommandRequest & { readonly command: "adddir"; readonly path: string }
+    command: NormalizedCommandRequest & {
+      readonly command: "adddir";
+      readonly path: string;
+    }
   ): Promise<CommandExecutionResult<AddDirCommandData>> {
-    const resolved = this.#requireBoundSession<AddDirCommandData>(command.command, command.envelope.chatId, command.envelope.userId, {
-      rejectWhenActive: true
-    });
+    const resolved = this.#requireInactiveBoundSession<AddDirCommandData>(
+      command.command,
+      command.envelope.chatId,
+      command.envelope.userId
+    );
     if (!resolved.ok) {
       return resolved.result;
     }
@@ -458,9 +520,11 @@ export class CommandsService {
   async #executeMode(
     command: Extract<NormalizedCommandRequest, { readonly command: "mode" }>
   ): Promise<CommandExecutionResult> {
-    const resolved = this.#requireBoundSession(command.command, command.envelope.chatId, command.envelope.userId, {
-      rejectWhenActive: true
-    });
+    const resolved = this.#requireInactiveBoundSession(
+      command.command,
+      command.envelope.chatId,
+      command.envelope.userId
+    );
     if (!resolved.ok) {
       return resolved.result;
     }
@@ -485,9 +549,11 @@ export class CommandsService {
   async #executeScope(
     command: Extract<NormalizedCommandRequest, { readonly command: "scope" }>
   ): Promise<CommandExecutionResult<ScopeCommandData>> {
-    const resolved = this.#requireBoundSession<ScopeCommandData>(command.command, command.envelope.chatId, command.envelope.userId, {
-      rejectWhenActive: true
-    });
+    const resolved = this.#requireInactiveBoundSession<ScopeCommandData>(
+      command.command,
+      command.envelope.chatId,
+      command.envelope.userId
+    );
     if (!resolved.ok) {
       return resolved.result;
     }
@@ -571,14 +637,9 @@ export class CommandsService {
     command: Extract<NormalizedCommandRequest, { readonly command: "stop" }>
   ): Promise<CommandExecutionResult> {
     this.#getChatSessionContext(command.envelope.chatId);
-    const routed = await this.#routing.dispatch(command);
-    const rejected = this.#findCommandRejection(routed.effects);
+    const rejected = await this.#dispatchCommandForRejection(command);
     if (rejected) {
-      return {
-        command: "stop",
-        status: "rejected",
-        message: rejected.text
-      };
+      return this.#commandRejectedResult("stop", rejected.text);
     }
 
     const context = this.#getChatSessionContext(command.envelope.chatId);
@@ -609,7 +670,11 @@ export class CommandsService {
     }
 
     if (parsed.kind === "list") {
-      const resolved = this.#requireBoundSession<PermCommandData>(command.command, command.envelope.chatId, command.envelope.userId);
+      const resolved = this.#requireBoundSession<PermCommandData>(
+        command.command,
+        command.envelope.chatId,
+        command.envelope.userId
+      );
       if (!resolved.ok) {
         return resolved.result;
       }
@@ -617,26 +682,40 @@ export class CommandsService {
       return {
         command: "perm",
         status: "ok",
-        message: this.#approval.formatPermFallbackText(resolved.context.session.sessionId, language)
+        message: this.#approval.formatPermFallbackText(
+          resolved.context.session.sessionId,
+          language
+        )
       };
     }
 
-    const permission = this.#store.pendingPermissions.get(parsed.request.permissionId);
+    const permission = this.#store.pendingPermissions.get(
+      parsed.request.permissionId
+    );
     if (!permission) {
       return {
         command: "perm",
         status: "rejected",
-        message: this.#t(command.envelope.userId, "已过期或已处理。", "Expired or already handled.")
+        message: this.#t(
+          command.envelope.userId,
+          "已过期或已处理。",
+          "Expired or already handled."
+        )
       };
     }
 
-    const resolution = this.#approval.resolveDecision({
-      permissionId: permission.permissionId,
-      decision: parsed.request.decision,
-      chatId: command.envelope.chatId,
-      userId: command.envelope.userId,
-      sessionSnapshot: this.#ensureRoutingSessionSnapshot(permission.sessionId)
-    }, language);
+    const resolution = this.#approval.resolveDecision(
+      {
+        permissionId: permission.permissionId,
+        decision: parsed.request.decision,
+        chatId: command.envelope.chatId,
+        userId: command.envelope.userId,
+        sessionSnapshot: this.#ensureRoutingSessionSnapshot(
+          permission.sessionId
+        )
+      },
+      language
+    );
 
     if (resolution.status === "approved" || resolution.status === "denied") {
       const inboundDecision: NormalizedApprovalDecision = {
@@ -650,7 +729,9 @@ export class CommandsService {
           chatId: command.envelope.chatId,
           userId: command.envelope.userId,
           receivedAt: command.envelope.receivedAt,
-          ...(command.envelope.messageId ? { messageId: command.envelope.messageId } : {})
+          ...(command.envelope.messageId
+            ? { messageId: command.envelope.messageId }
+            : {})
         }
       };
       await this.#routing.dispatch(inboundDecision);
@@ -658,7 +739,10 @@ export class CommandsService {
 
     return {
       command: "perm",
-      status: resolution.status === "approved" || resolution.status === "denied" ? "ok" : "rejected",
+      status:
+        resolution.status === "approved" || resolution.status === "denied"
+          ? "ok"
+          : "rejected",
       message: resolution.message,
       data: {
         approvalResult: resolution
@@ -682,13 +766,17 @@ export class CommandsService {
       };
     }
 
-    const boundSessionIds = new Set(this.#store.chatBindings.list().map((binding) => binding.sessionId));
+    const boundSessionIds = new Set(
+      this.#store.chatBindings.list().map((binding) => binding.sessionId)
+    );
     const deletableSessions: SessionRecord[] = [];
     let skippedBoundCount = 0;
     let skippedActiveCount = 0;
 
     for (const session of this.#store.sessions.list()) {
-      const effectiveRunState = this.#routing.getSessionSnapshot(session.sessionId)?.runState ?? session.runState;
+      const effectiveRunState =
+        this.#routing.getSessionSnapshot(session.sessionId)?.runState ??
+        session.runState;
       if (isSessionStateActiveForCommandGate(effectiveRunState)) {
         skippedActiveCount += 1;
         continue;
@@ -763,7 +851,10 @@ export class CommandsService {
   }
 
   async #executeReasoning(
-    command: Extract<NormalizedCommandRequest, { readonly command: "reasoning" }>
+    command: Extract<
+      NormalizedCommandRequest,
+      { readonly command: "reasoning" }
+    >
   ): Promise<CommandExecutionResult<ReasoningCommandData>> {
     if (!this.#reasoningConfigService) {
       return {
@@ -781,7 +872,9 @@ export class CommandsService {
     const args = command.args ?? [];
 
     if (args.length === 0) {
-      const currentEffort = await Promise.resolve(this.#reasoningConfigService.getCurrentEffort());
+      const currentEffort = await Promise.resolve(
+        this.#reasoningConfigService.getCurrentEffort()
+      );
       return {
         command: "reasoning",
         status: "ok",
@@ -829,7 +922,9 @@ export class CommandsService {
       };
     }
 
-    await Promise.resolve(this.#reasoningConfigService.setCurrentEffort(requested));
+    await Promise.resolve(
+      this.#reasoningConfigService.setCurrentEffort(requested)
+    );
 
     return {
       command: "reasoning",
@@ -895,7 +990,11 @@ export class CommandsService {
       };
     }
 
-    if (options.rejectWhenActive && context.actorSnapshot && isSessionStateActiveForCommandGate(context.actorSnapshot.runState)) {
+    if (
+      options.rejectWhenActive &&
+      context.actorSnapshot &&
+      isSessionStateActiveForCommandGate(context.actorSnapshot.runState)
+    ) {
       return {
         ok: false,
         result: {
@@ -920,11 +1019,44 @@ export class CommandsService {
     };
   }
 
-  #findCommandRejection(effects: readonly NormalizedOutboundMessage[]): CommandRejectedEffect | null {
+  #requireInactiveBoundSession<TData>(
+    command: NormalizedCommandRequest["command"],
+    chatId: string,
+    userId: string
+  ): BoundSessionResolution<TData> {
+    return this.#requireBoundSession(command, chatId, userId, {
+      rejectWhenActive: true
+    });
+  }
+
+  #findCommandRejection(
+    effects: readonly NormalizedOutboundMessage[]
+  ): CommandRejectedEffect | null {
     return effects.find(isCommandRejectedEffect) ?? null;
   }
 
-  #missingBindingResult<TData>(command: NormalizedCommandRequest["command"], userId: string): CommandExecutionResult<TData> {
+  async #dispatchCommandForRejection(
+    command: NormalizedCommandRequest
+  ): Promise<CommandRejectedEffect | null> {
+    const routed = await this.#routing.dispatch(command);
+    return this.#findCommandRejection(routed.effects);
+  }
+
+  #commandRejectedResult<TData>(
+    command: NormalizedCommandRequest["command"],
+    message: string
+  ): CommandExecutionResult<TData> {
+    return {
+      command,
+      status: "rejected",
+      message
+    };
+  }
+
+  #missingBindingResult<TData>(
+    command: NormalizedCommandRequest["command"],
+    userId: string
+  ): CommandExecutionResult<TData> {
     return {
       command,
       status: "rejected",
@@ -938,10 +1070,13 @@ export class CommandsService {
 
   #getChatSessionContext(chatId: string): ChatSessionContext {
     const binding = this.#store.chatBindings.get(chatId);
-    const session = binding ? this.#store.sessions.get(binding.sessionId) : null;
-    const actorSnapshot = binding && session
-      ? this.#ensureRoutingSnapshotForBinding(binding, session)
+    const session = binding
+      ? this.#store.sessions.get(binding.sessionId)
       : null;
+    const actorSnapshot =
+      binding && session
+        ? this.#ensureRoutingSnapshotForBinding(binding, session)
+        : null;
 
     return {
       binding,
@@ -954,9 +1089,14 @@ export class CommandsService {
     binding: ChatBindingRecord,
     session: SessionRecord
   ): SessionActorSnapshot {
-    const actorSnapshot = this.#ensureRoutingSessionSnapshot(session.sessionId, session);
+    const actorSnapshot = this.#ensureRoutingSessionSnapshot(
+      session.sessionId,
+      session
+    );
     if (!actorSnapshot) {
-      throw new Error(`Failed to hydrate routing snapshot for session ${session.sessionId}.`);
+      throw new Error(
+        `Failed to hydrate routing snapshot for session ${session.sessionId}.`
+      );
     }
 
     this.#syncRoutingBinding(binding.chatId, session.sessionId);
@@ -976,7 +1116,10 @@ export class CommandsService {
       return null;
     }
 
-    return this.#routing.registerSession(sessionId, buildPersistedSessionActorSnapshot(this.#store, session));
+    return this.#routing.registerSession(
+      sessionId,
+      buildPersistedSessionActorSnapshot(this.#store, session)
+    );
   }
 
   #syncRoutingBinding(chatId: string, sessionId: string): void {
@@ -987,7 +1130,10 @@ export class CommandsService {
     this.#routing.bindChat(chatId, sessionId);
   }
 
-  #toSessionUpsertInput(sessionId: string, session: WorkspaceSessionState): SessionUpsertInput {
+  #toSessionUpsertInput(
+    sessionId: string,
+    session: WorkspaceSessionState
+  ): SessionUpsertInput {
     return {
       sessionId,
       workspaceRoot: session.workspaceRoot,
@@ -1007,7 +1153,11 @@ export class CommandsService {
   }
 }
 
-export function createChatBindingRecord(chatId: string, sessionId: string, updatedAt: string): ChatBindingRecord {
+export function createChatBindingRecord(
+  chatId: string,
+  sessionId: string,
+  updatedAt: string
+): ChatBindingRecord {
   return {
     chatId,
     sessionId,
@@ -1015,16 +1165,20 @@ export function createChatBindingRecord(chatId: string, sessionId: string, updat
   };
 }
 
-function isCommandRejectedEffect(effect: NormalizedOutboundMessage): effect is CommandRejectedEffect {
+function isCommandRejectedEffect(
+  effect: NormalizedOutboundMessage
+): effect is CommandRejectedEffect {
   return effect.type === "command_rejected";
 }
 
-function parsePruneArgs(args: readonly string[] | undefined): {
-  readonly ok: true;
-  readonly keepCount: number;
-} | {
-  readonly ok: false;
-} {
+function parsePruneArgs(args: readonly string[] | undefined):
+  | {
+      readonly ok: true;
+      readonly keepCount: number;
+    }
+  | {
+      readonly ok: false;
+    } {
   if (!args || args.length === 0) {
     return {
       ok: true,
@@ -1058,12 +1212,14 @@ function pluralize(noun: string, count: number): string {
 function parseScopeArgs(
   args: readonly string[] | undefined,
   currentScope: SessionAccessScope
-): {
-  readonly ok: true;
-  readonly scope: SessionAccessScope;
-} | {
-  readonly ok: false;
-} {
+):
+  | {
+      readonly ok: true;
+      readonly scope: SessionAccessScope;
+    }
+  | {
+      readonly ok: false;
+    } {
   if (!args || args.length === 0) {
     return {
       ok: true,

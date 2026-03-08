@@ -10,20 +10,29 @@ import type {
 export interface BindChatSessionRequest {
   readonly chatId: string;
   readonly targetSessionId: string;
-  readonly command: Extract<NormalizedCommandRequest, { readonly command: "bind" }>;
+  readonly command: Extract<
+    NormalizedCommandRequest,
+    { readonly command: "bind" }
+  >;
 }
 
 export interface CreateAndBindSessionRequest {
   readonly chatId: string;
   readonly targetSessionId: string;
-  readonly command: Extract<NormalizedCommandRequest, { readonly command: "new" }>;
+  readonly command: Extract<
+    NormalizedCommandRequest,
+    { readonly command: "new" }
+  >;
 }
 
 export class ChatGate {
   private readonly bindings = new Map<string, string>();
   private readonly tails = new Map<string, Promise<void>>();
 
-  public hydrateBinding(chatId: string, sessionId: string): ChatBindingSnapshot {
+  public hydrateBinding(
+    chatId: string,
+    sessionId: string
+  ): ChatBindingSnapshot {
     this.bindings.set(chatId, sessionId);
     return this.getBinding(chatId);
   }
@@ -55,7 +64,9 @@ export class ChatGate {
   ): Promise<RoutingDispatchResult> {
     return this.enqueue(request.chatId, async () => {
       const currentBinding = this.getBinding(request.chatId);
-      const currentActor = currentBinding.sessionId ? actors.get(currentBinding.sessionId) ?? null : null;
+      const currentActor = currentBinding.sessionId
+        ? (actors.get(currentBinding.sessionId) ?? null)
+        : null;
 
       if (currentActor?.isActiveForCommandGate()) {
         return rejectActiveCommand(request.command, currentBinding.sessionId);
@@ -71,7 +82,14 @@ export class ChatGate {
       return {
         binding: this.getBinding(request.chatId),
         sessionSnapshot: targetActor.getSnapshot(),
-        effects: [createBindingChangedEffect(request.chatId, currentBinding.sessionId, request.targetSessionId, "bind")]
+        effects: [
+          createBindingChangedEffect(
+            request.chatId,
+            currentBinding.sessionId,
+            request.targetSessionId,
+            "bind"
+          )
+        ]
       };
     });
   }
@@ -82,7 +100,9 @@ export class ChatGate {
   ): Promise<RoutingDispatchResult> {
     return this.enqueue(request.chatId, async () => {
       const currentBinding = this.getBinding(request.chatId);
-      const currentActor = currentBinding.sessionId ? actors.get(currentBinding.sessionId) ?? null : null;
+      const currentActor = currentBinding.sessionId
+        ? (actors.get(currentBinding.sessionId) ?? null)
+        : null;
 
       if (currentActor?.isActiveForCommandGate()) {
         return rejectActiveCommand(request.command, currentBinding.sessionId);
@@ -118,7 +138,12 @@ export class ChatGate {
             chatId: request.chatId,
             sessionId: request.targetSessionId
           },
-          createBindingChangedEffect(request.chatId, currentBinding.sessionId, request.targetSessionId, "new")
+          createBindingChangedEffect(
+            request.chatId,
+            currentBinding.sessionId,
+            request.targetSessionId,
+            "new"
+          )
         ]
       };
     });
@@ -127,7 +152,13 @@ export class ChatGate {
   private enqueue<T>(chatId: string, work: () => Promise<T>): Promise<T> {
     const previousTail = this.tails.get(chatId) ?? Promise.resolve();
     const execution = previousTail.then(work);
-    this.tails.set(chatId, execution.then(() => undefined, () => undefined));
+    this.tails.set(
+      chatId,
+      execution.then(
+        () => undefined,
+        () => undefined
+      )
+    );
     return execution;
   }
 }
@@ -148,7 +179,10 @@ function createBindingChangedEffect(
 }
 
 function rejectActiveCommand(
-  command: Extract<NormalizedCommandRequest, { readonly command: "bind" | "new" }>,
+  command: Extract<
+    NormalizedCommandRequest,
+    { readonly command: "bind" | "new" }
+  >,
   sessionId: string | null
 ): RoutingDispatchResult {
   return {

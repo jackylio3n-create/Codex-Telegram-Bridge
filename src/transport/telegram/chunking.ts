@@ -36,7 +36,10 @@ export function chunkTelegramText(
   return chunks;
 }
 
-export function createTelegramPreviewText(text: string, maxLength: number): string {
+export function createTelegramPreviewText(
+  text: string,
+  maxLength: number
+): string {
   if (text.length <= maxLength) {
     return text;
   }

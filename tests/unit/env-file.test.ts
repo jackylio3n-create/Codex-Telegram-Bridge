@@ -19,18 +19,25 @@ EMPTY=""
 `);
 
   assert.equal(env.NODE_ENV, "production");
-  assert.equal(env.CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN, "123456:replace me");
-  assert.equal(env.CODEX_TELEGRAM_BRIDGE_ALLOWED_TELEGRAM_USER_IDS, "123456789");
+  assert.equal(
+    env.CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN,
+    "123456:replace me"
+  );
+  assert.equal(
+    env.CODEX_TELEGRAM_BRIDGE_ALLOWED_TELEGRAM_USER_IDS,
+    "123456789"
+  );
   assert.equal(env.EMPTY, "");
 });
 
 test("resolveRuntimeEnvironment prefers process env over env file values", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-env-"));
   const envFilePath = join(tempRoot, "config.env");
-  await writeFile(envFilePath, [
-    "NODE_ENV=production",
-    "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL=debug"
-  ].join("\n"), "utf8");
+  await writeFile(
+    envFilePath,
+    ["NODE_ENV=production", "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL=debug"].join("\n"),
+    "utf8"
+  );
 
   const resolved = await resolveRuntimeEnvironment({
     explicitEnvFilePath: envFilePath,
@@ -52,7 +59,12 @@ test("getDefaultEnvFileSearchPaths returns cwd and home based defaults", () => {
 
   assert.deepEqual(paths, [
     resolve("/workspace/project", ".env"),
-    join(resolve("/home/bridge"), ".config", "codex-telegram-bridge", "config.env"),
+    join(
+      resolve("/home/bridge"),
+      ".config",
+      "codex-telegram-bridge",
+      "config.env"
+    ),
     "/etc/codex-telegram-bridge.env"
   ]);
 });

@@ -10,7 +10,6 @@ import type { CommandExecutionResult } from "../../core/commands/types.js";
 import { InMemoryRoutingCore } from "../../core/router/index.js";
 import {
   buildPersistedSessionActorSnapshot,
-  isSessionStateActiveForCommandGate,
   toWorkspaceSessionState
 } from "../../core/session/index.js";
 import { SummaryService } from "../../core/summary/index.js";
@@ -29,13 +28,16 @@ import {
   type AddDirConfirmation,
   type FilesystemInspector,
   type VisibleDirectoryPolicy,
-  type WorkspaceMutationOptions,
-  type WorkspaceSessionState
+  type WorkspaceMutationOptions
 } from "../../core/workspace/index.js";
 import type { AppConfig } from "../../config/index.js";
 import { createLogger, type Logger } from "../../logger/index.js";
 import { selectText, type PromptLanguage } from "../../i18n.js";
-import { createCodexReasoningConfigService, createCodexStatusTextProvider, startCodexRun } from "../codex/index.js";
+import {
+  createCodexReasoningConfigService,
+  createCodexStatusTextProvider,
+  startCodexRun
+} from "../codex/index.js";
 import type {
   CodexCancelOutcome,
   CodexExecCommandBeginEvent,
@@ -52,7 +54,11 @@ import type {
   SessionRecord,
   SessionRunState
 } from "../../store/types.js";
-import { TelegramBotClient, TelegramPollingService, TelegramPreviewPublisher } from "../../transport/telegram/index.js";
+import {
+  TelegramBotClient,
+  TelegramPollingService,
+  TelegramPreviewPublisher
+} from "../../transport/telegram/index.js";
 import type {
   TelegramInboundEnvelope,
   TelegramInlineKeyboardMarkup,
@@ -63,12 +69,27 @@ import { type BridgeRuntimeState, writeBridgeRuntimeState } from "./state.js";
 
 const DEFAULT_POLL_FAILURE_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000] as const;
 const DEFAULT_INPUT_RATE_LIMIT = { max: 5, windowMs: 10_000 } as const;
-const DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT = { max: 4, windowMs: 30_000 } as const;
+const DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT = {
+  max: 4,
+  windowMs: 30_000
+} as const;
 const DEFAULT_MEDIA_FILE_SIZE_CAP_BYTES = 20 * 1024 * 1024;
 const ADD_DIR_CONFIRMATION_TTL_MS = 2 * 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
-const ACTIVE_RUN_STATES = new Set<SessionRunState>(["running", "waiting_approval", "cancelling"]);
-const ACTIVE_COMMANDS = new Set<NormalizedCommandRequest["command"]>(["new", "bind", "cwd", "mode", "adddir", "stop", "prune"]);
+const ACTIVE_RUN_STATES = new Set<SessionRunState>([
+  "running",
+  "waiting_approval",
+  "cancelling"
+]);
+const ACTIVE_COMMANDS = new Set<NormalizedCommandRequest["command"]>([
+  "new",
+  "bind",
+  "cwd",
+  "mode",
+  "adddir",
+  "stop",
+  "prune"
+]);
 
 export interface BridgeRuntimeOptions {
   readonly config: AppConfig;
@@ -135,7 +156,9 @@ class SlidingWindowRateLimiter {
   allow(key: string, maxEvents: number, windowMs: number): boolean {
     const now = Date.now();
     const cutoff = now - windowMs;
-    const recent = (this.#events.get(key) ?? []).filter((timestamp) => timestamp >= cutoff);
+    const recent = (this.#events.get(key) ?? []).filter(
+      (timestamp) => timestamp >= cutoff
+    );
     if (recent.length >= maxEvents) {
       this.#events.set(key, recent);
       return false;
@@ -168,7 +191,10 @@ export class BridgeRuntime {
   readonly #workspaceMutationOptions: WorkspaceMutationOptions;
   readonly #activeRuns = new Map<string, ActiveRunContext>();
   readonly #activeRunCompletions = new Map<string, Promise<void>>();
-  readonly #pendingAddDirConfirmations = new Map<string, PendingAddDirConfirmation>();
+  readonly #pendingAddDirConfirmations = new Map<
+    string,
+    PendingAddDirConfirmation
+  >();
   readonly #inputRateLimiter = new SlidingWindowRateLimiter();
   readonly #dangerousCommandRateLimiter = new SlidingWindowRateLimiter();
   #stateWriteTail: Promise<void> = Promise.resolve();
@@ -211,33 +237,53 @@ export class BridgeRuntime {
     this.#codexEnvironment = options.codexEnvironment;
     this.#workspaceMutationOptions = options.workspaceMutationOptions;
     this.#routing = new InMemoryRoutingCore();
-    this.#approval = new ApprovalService(this.#store.pendingPermissions, { clock: this.#clock });
-    this.#commands = new CommandsService(this.#store, this.#routing, this.#approval, {
-      defaultWorkspaceRoot: this.#config.defaultWorkspaceRoot,
-      workspaceMutationOptions: this.#workspaceMutationOptions,
-      statusTextProvider: createCodexStatusTextProvider(this.#config.codexHome),
-      reasoningConfigService: createCodexReasoningConfigService(this.#config.codexHome),
-      languageResolver: (userId) => this.#store.telegramUserAuth.get(userId)?.preferredLanguage ?? "en"
+    this.#approval = new ApprovalService(this.#store.pendingPermissions, {
+      clock: this.#clock
     });
-    this.#audit = new AuditService(this.#store.auditLogs, { clock: this.#clock });
+    this.#commands = new CommandsService(
+      this.#store,
+      this.#routing,
+      this.#approval,
+      {
+        defaultWorkspaceRoot: this.#config.defaultWorkspaceRoot,
+        workspaceMutationOptions: this.#workspaceMutationOptions,
+        statusTextProvider: createCodexStatusTextProvider(
+          this.#config.codexHome
+        ),
+        reasoningConfigService: createCodexReasoningConfigService(
+          this.#config.codexHome
+        ),
+        languageResolver: (userId) =>
+          this.#store.telegramUserAuth.get(userId)?.preferredLanguage ?? "en"
+      }
+    );
+    this.#audit = new AuditService(this.#store.auditLogs, {
+      clock: this.#clock
+    });
     this.#summary = new SummaryService(this.#store, { clock: this.#clock });
     this.#telegramClient = new TelegramBotClient({
       botToken: this.#config.telegramBotToken,
-      ...(options.telegramFetchImplementation ? { fetchImplementation: options.telegramFetchImplementation } : {})
+      ...(options.telegramFetchImplementation
+        ? { fetchImplementation: options.telegramFetchImplementation }
+        : {})
     });
-    this.#polling = new TelegramPollingService(this.#telegramClient, this.#store, {
-      botToken: this.#config.telegramBotToken,
-      allowedUserIds: this.#config.allowedTelegramUserIds,
-      verificationPasswordHash: this.#config.verificationPasswordHash,
-      ownerUserId: this.#config.ownerTelegramUserId,
-      ownerChatId: this.#config.ownerTelegramChatId,
-      pollingTimeoutSeconds: 30,
-      offsetChannelKey: "telegram:getUpdates",
-      previewCapabilityMode: "edit",
-      previewMaxLength: this.#config.defaults.previewMaxLength,
-      finalChunkMaxLength: this.#config.defaults.finalChunkMaxLength,
-      tempDirectoryPath: this.#config.paths.tempDir
-    });
+    this.#polling = new TelegramPollingService(
+      this.#telegramClient,
+      this.#store,
+      {
+        botToken: this.#config.telegramBotToken,
+        allowedUserIds: this.#config.allowedTelegramUserIds,
+        verificationPasswordHash: this.#config.verificationPasswordHash,
+        ownerUserId: this.#config.ownerTelegramUserId,
+        ownerChatId: this.#config.ownerTelegramChatId,
+        pollingTimeoutSeconds: 30,
+        offsetChannelKey: "telegram:getUpdates",
+        previewCapabilityMode: "edit",
+        previewMaxLength: this.#config.defaults.previewMaxLength,
+        finalChunkMaxLength: this.#config.defaults.finalChunkMaxLength,
+        tempDirectoryPath: this.#config.paths.tempDir
+      }
+    );
     this.#preview = new TelegramPreviewPublisher(this.#telegramClient, {
       previewCapabilityMode: "edit",
       previewMaxLength: this.#config.defaults.previewMaxLength,
@@ -247,18 +293,25 @@ export class BridgeRuntime {
 
   static async create(options: BridgeRuntimeOptions): Promise<BridgeRuntime> {
     const clock = options.clock ?? (() => new Date());
-    const filesystemInspector = options.filesystemInspector ?? createNodeFilesystemInspector();
-    const logger = options.logger ?? createLogger({
-      name: options.config.appName,
-      level: options.config.logLevel,
-      console: true,
-      filePath: options.config.paths.logFilePath,
-      redactValues: [
-        options.config.telegramBotToken,
-        ...(options.config.verificationPasswordHash ? [options.config.verificationPasswordHash] : [])
-      ]
-    });
-    const store = options.store ?? await createBridgeStore({ config: options.config, clock });
+    const filesystemInspector =
+      options.filesystemInspector ?? createNodeFilesystemInspector();
+    const logger =
+      options.logger ??
+      createLogger({
+        name: options.config.appName,
+        level: options.config.logLevel,
+        console: true,
+        filePath: options.config.paths.logFilePath,
+        redactValues: [
+          options.config.telegramBotToken,
+          ...(options.config.verificationPasswordHash
+            ? [options.config.verificationPasswordHash]
+            : [])
+        ]
+      });
+    const store =
+      options.store ??
+      (await createBridgeStore({ config: options.config, clock }));
 
     return new BridgeRuntime({
       config: options.config,
@@ -269,11 +322,18 @@ export class BridgeRuntime {
       ...(options.telegramFetchImplementation
         ? { telegramFetchImplementation: options.telegramFetchImplementation }
         : {}),
-      codexExecutablePath: options.codexExecutablePath ?? process.env.CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE ?? "codex",
-      ...(options.codexEnvironment ? { codexEnvironment: options.codexEnvironment } : {}),
+      codexExecutablePath:
+        options.codexExecutablePath ??
+        process.env.CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE ??
+        "codex",
+      ...(options.codexEnvironment
+        ? { codexEnvironment: options.codexEnvironment }
+        : {}),
       workspaceMutationOptions: {
         inspector: filesystemInspector,
-        ...(options.visiblePolicy ? { visiblePolicy: options.visiblePolicy } : {}),
+        ...(options.visiblePolicy
+          ? { visiblePolicy: options.visiblePolicy }
+          : {}),
         ...(options.workspaceMutationOptions ?? {})
       },
       filesystemInspector,
@@ -291,7 +351,9 @@ export class BridgeRuntime {
 
   async stop(): Promise<void> {
     if (this.#stopping) {
-      this.#logger.info("Stop requested while shutdown is already in progress.");
+      this.#logger.info(
+        "Stop requested while shutdown is already in progress."
+      );
       this.#polling.stop();
       await Promise.allSettled([...this.#activeRunCompletions.values()]);
       await this.#loopPromise;
@@ -316,7 +378,9 @@ export class BridgeRuntime {
   }
 
   async getRuntimeState(): Promise<BridgeRuntimeState> {
-    return this.#buildRuntimeState(this.#stopping ? "stopping" : this.#running ? "running" : "stopped");
+    return this.#buildRuntimeState(
+      this.#stopping ? "stopping" : this.#running ? "running" : "stopped"
+    );
   }
 
   async #runLoop(): Promise<void> {
@@ -338,7 +402,9 @@ export class BridgeRuntime {
         };
 
         try {
-          const result = await this.#polling.pollOnce((envelope) => this.#handleInboundEnvelope(envelope));
+          const result = await this.#polling.pollOnce((envelope) =>
+            this.#handleInboundEnvelope(envelope)
+          );
           this.#pollMetrics = {
             ...this.#pollMetrics,
             previousOffset: result.previousOffset,
@@ -349,7 +415,7 @@ export class BridgeRuntime {
           };
           await this.#persistState("running");
         } catch (error) {
-          if (this.#stopping && isAbortError(error)) {
+          if (this.#isStoppingAbortError(error)) {
             this.#logger.info("Polling aborted during shutdown.");
             break;
           }
@@ -358,17 +424,25 @@ export class BridgeRuntime {
           this.#pollMetrics = {
             ...this.#pollMetrics,
             lastFailedPollAt: this.#clock().toISOString(),
-            consecutivePollFailures: this.#pollMetrics.consecutivePollFailures + 1,
+            consecutivePollFailures:
+              this.#pollMetrics.consecutivePollFailures + 1,
             lastPollError: getErrorMessage(error)
           };
           await this.#persistState("error");
-          if (this.#stopping) {
+          if (this.#shouldStopRunLoop()) {
             break;
           }
 
-          const backoffMs = DEFAULT_POLL_FAILURE_BACKOFF_MS[
-            Math.min(this.#pollMetrics.consecutivePollFailures - 1, DEFAULT_POLL_FAILURE_BACKOFF_MS.length - 1)
-          ] ?? DEFAULT_POLL_FAILURE_BACKOFF_MS[DEFAULT_POLL_FAILURE_BACKOFF_MS.length - 1];
+          const backoffMs =
+            DEFAULT_POLL_FAILURE_BACKOFF_MS[
+              Math.min(
+                this.#pollMetrics.consecutivePollFailures - 1,
+                DEFAULT_POLL_FAILURE_BACKOFF_MS.length - 1
+              )
+            ] ??
+            DEFAULT_POLL_FAILURE_BACKOFF_MS[
+              DEFAULT_POLL_FAILURE_BACKOFF_MS.length - 1
+            ];
           await delay(backoffMs);
         }
       }
@@ -398,23 +472,34 @@ export class BridgeRuntime {
     for (const session of this.#store.sessions.list()) {
       let normalized = session;
       if (ACTIVE_RUN_STATES.has(session.runState)) {
+        const recoveredAt = this.#clock().toISOString();
         normalized = this.#store.sessions.update(session.sessionId, {
           runState: "failed",
           activeRunId: null,
           cancellationResult: null,
           staleRecovered: true,
-          lastError: "Recovered after daemon restart while a run was still active.",
-          updatedAt: this.#clock().toISOString()
+          lastError:
+            "Recovered after daemon restart while a run was still active.",
+          updatedAt: recoveredAt
         });
 
         if (session.activeRunId) {
-          for (const permission of unresolvedBySessionRun.get(createSessionRunKey(session.sessionId, session.activeRunId)) ?? []) {
-            this.#store.pendingPermissions.resolve(permission.permissionId, "expired", this.#clock().toISOString());
+          for (const permission of unresolvedBySessionRun.get(
+            createSessionRunKey(session.sessionId, session.activeRunId)
+          ) ?? []) {
+            this.#store.pendingPermissions.resolve(
+              permission.permissionId,
+              "expired",
+              recoveredAt
+            );
           }
         }
       }
 
-      this.#routing.registerSession(session.sessionId, buildPersistedSessionActorSnapshot(this.#store, normalized));
+      this.#routing.registerSession(
+        session.sessionId,
+        buildPersistedSessionActorSnapshot(this.#store, normalized)
+      );
     }
 
     for (const binding of this.#store.chatBindings.list()) {
@@ -423,18 +508,25 @@ export class BridgeRuntime {
   }
 
   async #persistState(status: BridgeRuntimeState["status"]): Promise<void> {
-    const writeTask = this.#stateWriteTail.catch(() => undefined).then(async () => {
-      const nextState = await this.#buildRuntimeState(status);
-      await writeBridgeRuntimeState(this.#config.paths.stateFilePath, nextState);
-    });
+    const writeTask = this.#stateWriteTail
+      .catch(() => undefined)
+      .then(async () => {
+        const nextState = await this.#buildRuntimeState(status);
+        await writeBridgeRuntimeState(
+          this.#config.paths.stateFilePath,
+          nextState
+        );
+      });
     this.#stateWriteTail = writeTask;
     await writeTask;
   }
 
-  async #buildRuntimeState(status: BridgeRuntimeState["status"]): Promise<BridgeRuntimeState> {
-    const activeSessions = this.#store.sessions.listOverview()
-      .filter((session) => ACTIVE_RUN_STATES.has(session.runState))
-      .length;
+  async #buildRuntimeState(
+    status: BridgeRuntimeState["status"]
+  ): Promise<BridgeRuntimeState> {
+    const activeSessions = this.#store.sessions
+      .listOverview()
+      .filter((session) => ACTIVE_RUN_STATES.has(session.runState)).length;
 
     return {
       version: 1,
@@ -464,7 +556,9 @@ export class BridgeRuntime {
   async #expirePendingApprovals(): Promise<void> {
     const expired = this.#approval.expirePendingApprovals(this.#clock());
     if (expired.expiredCount > 0) {
-      this.#logger.info("Expired pending approvals.", { expiredCount: expired.expiredCount });
+      this.#logger.info("Expired pending approvals.", {
+        expiredCount: expired.expiredCount
+      });
       for (const permissionId of expired.expiredPermissionIds) {
         await this.#handleExpiredRuntimeApproval(permissionId);
       }
@@ -475,20 +569,24 @@ export class BridgeRuntime {
     const now = this.#clock();
     const cleanup = this.#store.runCleanup({
       approvalExpiryOlderThan: new Date(
-        now.getTime() - this.#config.defaults.expiredApprovalRetentionDays * MILLISECONDS_PER_DAY
+        now.getTime() -
+          this.#config.defaults.expiredApprovalRetentionDays *
+            MILLISECONDS_PER_DAY
       ),
       approvalResolutionOlderThan: new Date(
-        now.getTime() - this.#config.defaults.resolvedApprovalRetentionDays * MILLISECONDS_PER_DAY
+        now.getTime() -
+          this.#config.defaults.resolvedApprovalRetentionDays *
+            MILLISECONDS_PER_DAY
       ),
       maxSummariesPerSession: this.#config.defaults.maxSummariesPerSession,
       maxAuditRows: this.#config.defaults.maxAuditRows
     });
 
     if (
-      cleanup.deletedExpiredPermissions > 0
-      || cleanup.deletedResolvedPermissions > 0
-      || cleanup.deletedSummaryRows > 0
-      || cleanup.deletedAuditRows > 0
+      cleanup.deletedExpiredPermissions > 0 ||
+      cleanup.deletedResolvedPermissions > 0 ||
+      cleanup.deletedSummaryRows > 0 ||
+      cleanup.deletedAuditRows > 0
     ) {
       this.#logger.info("Store cleanup removed historical rows.", {
         ...cleanup
@@ -497,13 +595,22 @@ export class BridgeRuntime {
   }
 
   async #cancelAllActiveRuns(): Promise<void> {
-    await Promise.all([...this.#activeRuns.keys()].map((sessionId) => this.#requestRunCancellation(sessionId)));
+    await Promise.all(
+      [...this.#activeRuns.keys()].map((sessionId) =>
+        this.#requestRunCancellation(sessionId)
+      )
+    );
   }
 
-  async #handleInboundEnvelope(envelope: TelegramInboundEnvelope): Promise<void> {
+  async #handleInboundEnvelope(
+    envelope: TelegramInboundEnvelope
+  ): Promise<void> {
     this.#pollMetrics = {
       ...this.#pollMetrics,
-      lastEvent: formatInboundEventMetric(envelope, this.#config.defaults.includeRuntimeIdentifiers)
+      lastEvent: formatInboundEventMetric(
+        envelope,
+        this.#config.defaults.includeRuntimeIdentifiers
+      )
     };
 
     switch (envelope.inboundMessage.type) {
@@ -523,19 +630,27 @@ export class BridgeRuntime {
     envelope: TelegramInboundEnvelope,
     command: NormalizedCommandRequest
   ): Promise<void> {
-    if (this.#isDangerousCommand(command.command) && !this.#dangerousCommandRateLimiter.allow(
-      envelope.chatId,
-      DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT.max,
-      DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT.windowMs
-    )) {
+    if (
+      this.#isDangerousCommand(command.command) &&
+      !this.#dangerousCommandRateLimiter.allow(
+        envelope.chatId,
+        DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT.max,
+        DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT.windowMs
+      )
+    ) {
       await this.#sendText(
         envelope.chatId,
-        this.#tChat(envelope.chatId, "触发频率限制，请稍后再试。", "Rate limit reached. Please wait a moment and try again.")
+        this.#tChat(
+          envelope.chatId,
+          "触发频率限制，请稍后再试。",
+          "Rate limit reached. Please wait a moment and try again."
+        )
       );
       return;
     }
 
-    const boundSessionId = this.#store.chatBindings.get(envelope.chatId)?.sessionId ?? null;
+    const boundSessionId =
+      this.#store.chatBindings.get(envelope.chatId)?.sessionId ?? null;
     this.#audit.recordUserCommand(
       {
         chatId: envelope.chatId,
@@ -546,10 +661,12 @@ export class BridgeRuntime {
     );
 
     if (command.command === "adddir") {
-      const confirmed = await this.#tryApplyPendingAddDirConfirmation(command as NormalizedCommandRequest & {
-        readonly command: "adddir";
-        readonly path: string;
-      });
+      const confirmed = await this.#tryApplyPendingAddDirConfirmation(
+        command as NormalizedCommandRequest & {
+          readonly command: "adddir";
+          readonly path: string;
+        }
+      );
       if (confirmed) {
         return;
       }
@@ -564,14 +681,20 @@ export class BridgeRuntime {
     envelope: TelegramInboundEnvelope,
     input: Extract<NormalizedInboundMessage, { readonly type: "user_input" }>
   ): Promise<void> {
-    if (!this.#inputRateLimiter.allow(
-      envelope.chatId,
-      DEFAULT_INPUT_RATE_LIMIT.max,
-      DEFAULT_INPUT_RATE_LIMIT.windowMs
-    )) {
+    if (
+      !this.#inputRateLimiter.allow(
+        envelope.chatId,
+        DEFAULT_INPUT_RATE_LIMIT.max,
+        DEFAULT_INPUT_RATE_LIMIT.windowMs
+      )
+    ) {
       await this.#sendText(
         envelope.chatId,
-        this.#tChat(envelope.chatId, "触发频率限制，请稍后再试。", "Rate limit reached. Please wait a moment and try again.")
+        this.#tChat(
+          envelope.chatId,
+          "触发频率限制，请稍后再试。",
+          "Rate limit reached. Please wait a moment and try again."
+        )
       );
       return;
     }
@@ -604,7 +727,10 @@ export class BridgeRuntime {
       buildUserInputAuditPayload(input)
     );
 
-    if (this.#activeRuns.has(session.sessionId) || ACTIVE_RUN_STATES.has(session.runState)) {
+    if (
+      this.#activeRuns.has(session.sessionId) ||
+      ACTIVE_RUN_STATES.has(session.runState)
+    ) {
       await this.#sendText(
         envelope.chatId,
         this.#tChat(
@@ -619,12 +745,12 @@ export class BridgeRuntime {
     await this.#startSessionRun(session, input);
   }
 
-  async #handleApprovalDecisionEnvelope(decision: NormalizedApprovalDecision): Promise<void> {
-    const persistedSession = this.#store.sessions.get(decision.sessionId);
-    const sessionSnapshot = this.#routing.getSessionSnapshot(decision.sessionId)
-      ?? (persistedSession
-        ? this.#routing.registerSession(decision.sessionId, buildPersistedSessionActorSnapshot(this.#store, persistedSession))
-        : null);
+  async #handleApprovalDecisionEnvelope(
+    decision: NormalizedApprovalDecision
+  ): Promise<void> {
+    const sessionSnapshot = this.#ensurePersistedRoutingSessionSnapshot(
+      decision.sessionId
+    );
     const resolution = this.#approval.resolveDecision({
       permissionId: decision.permissionId,
       decision: decision.decision,
@@ -659,7 +785,13 @@ export class BridgeRuntime {
       await this.#handleRuntimeApprovalResolution(resolution);
     }
 
-    await this.#sendText(decision.envelope.chatId, this.#formatApprovalResolutionMessage(decision.envelope.chatId, resolution));
+    await this.#sendText(
+      decision.envelope.chatId,
+      this.#formatApprovalResolutionMessage(
+        decision.envelope.chatId,
+        resolution
+      )
+    );
   }
 
   async #handleCommandSideEffects(
@@ -689,12 +821,19 @@ export class BridgeRuntime {
       );
     }
 
-    if (command.command === "adddir" && result.status === "confirmation_required") {
+    if (
+      command.command === "adddir" &&
+      result.status === "confirmation_required"
+    ) {
       const binding = this.#store.chatBindings.get(command.envelope.chatId);
       const sessionId = binding?.sessionId;
-      const confirmation = result.data && typeof result.data === "object" && "confirmation" in result.data
-        ? (result.data as { readonly confirmation: AddDirConfirmation }).confirmation
-        : null;
+      const confirmation =
+        result.data &&
+        typeof result.data === "object" &&
+        "confirmation" in result.data
+          ? (result.data as { readonly confirmation: AddDirConfirmation })
+              .confirmation
+          : null;
       if (sessionId && confirmation) {
         const key = createAddDirConfirmationKey(
           command.envelope.chatId,
@@ -721,7 +860,12 @@ export class BridgeRuntime {
       return;
     }
 
-    if (command.command === "cwd" || command.command === "mode" || command.command === "new" || command.command === "bind") {
+    if (
+      command.command === "cwd" ||
+      command.command === "mode" ||
+      command.command === "new" ||
+      command.command === "bind"
+    ) {
       this.#summary.refreshRollingSummary(sessionId);
     }
   }
@@ -742,7 +886,12 @@ export class BridgeRuntime {
       return false;
     }
 
-    const key = createAddDirConfirmationKey(command.envelope.chatId, command.envelope.userId, session.sessionId, command.path);
+    const key = createAddDirConfirmationKey(
+      command.envelope.chatId,
+      command.envelope.userId,
+      session.sessionId,
+      command.path
+    );
     const pending = this.#pendingAddDirConfirmations.get(key);
     if (!pending || pending.expiresAt < this.#clock().getTime()) {
       this.#pendingAddDirConfirmations.delete(key);
@@ -798,10 +947,20 @@ export class BridgeRuntime {
   }
 
   async #emitRoutingEffects(
-    effects: readonly { readonly type: string; readonly chatId?: string; readonly text?: string }[]
+    effects: readonly {
+      readonly type: string;
+      readonly chatId?: string;
+      readonly text?: string;
+    }[]
   ): Promise<void> {
     for (const effect of effects) {
-      if ((effect.type === "chat_feedback" || effect.type === "command_rejected" || effect.type === "session_event_rejected") && effect.chatId && effect.text) {
+      if (
+        (effect.type === "chat_feedback" ||
+          effect.type === "command_rejected" ||
+          effect.type === "session_event_rejected") &&
+        effect.chatId &&
+        effect.text
+      ) {
         await this.#sendText(effect.chatId, effect.text);
       }
     }
@@ -818,11 +977,16 @@ export class BridgeRuntime {
   }
 
   #languageForChat(chatId: string): PromptLanguage {
-    return this.#store.telegramUserAuth.findByChatId(chatId)?.preferredLanguage ?? "en";
+    return (
+      this.#store.telegramUserAuth.findByChatId(chatId)?.preferredLanguage ??
+      "en"
+    );
   }
 
   #languageForSession(sessionId: string): PromptLanguage {
-    const chatId = this.#store.chatBindings.list().find((binding) => binding.sessionId === sessionId)?.chatId;
+    const chatId = this.#store.chatBindings
+      .list()
+      .find((binding) => binding.sessionId === sessionId)?.chatId;
     return chatId ? this.#languageForChat(chatId) : "en";
   }
 
@@ -841,17 +1005,24 @@ export class BridgeRuntime {
     prefixEn: string,
     issues: readonly { readonly field: string; readonly message: string }[]
   ): string {
-    const prefix = mode === "chat"
-      ? this.#tChat(targetId, prefixZh, prefixEn)
-      : this.#tSession(targetId, prefixZh, prefixEn);
+    const prefix =
+      mode === "chat"
+        ? this.#tChat(targetId, prefixZh, prefixEn)
+        : this.#tSession(targetId, prefixZh, prefixEn);
     if (issues.length === 0) {
       return prefix;
     }
 
-    return [prefix, ...issues.map((issue) => `- ${issue.field}: ${issue.message}`)].join("\n");
+    return [
+      prefix,
+      ...issues.map((issue) => `- ${issue.field}: ${issue.message}`)
+    ].join("\n");
   }
 
-  #formatApprovalResolutionMessage(chatId: string, resolution: ApprovalResolutionResult): string {
+  #formatApprovalResolutionMessage(
+    chatId: string,
+    resolution: ApprovalResolutionResult
+  ): string {
     if (resolution.status === "approved") {
       return this.#tChat(chatId, "已批准。", "Approval granted.");
     }
@@ -860,7 +1031,11 @@ export class BridgeRuntime {
       return this.#tChat(chatId, "已拒绝。", "Approval denied.");
     }
 
-    return this.#tChat(chatId, "已过期或已处理。", "Expired or already handled.");
+    return this.#tChat(
+      chatId,
+      "已过期或已处理。",
+      "Expired or already handled."
+    );
   }
 
   async #startSessionRun(
@@ -901,40 +1076,47 @@ export class BridgeRuntime {
     const previewHandle = await this.#safeBeginPreview(
       input.envelope.chatId,
       input.contentType === "image"
-        ? this.#tChat(input.envelope.chatId, "已收到图片，正在运行 Codex...", "Image received. Running Codex...")
-        : this.#tChat(input.envelope.chatId, "正在运行 Codex...", "Running Codex...")
+        ? this.#tChat(
+            input.envelope.chatId,
+            "已收到图片，正在运行 Codex...",
+            "Image received. Running Codex..."
+          )
+        : this.#tChat(
+            input.envelope.chatId,
+            "正在运行 Codex...",
+            "Running Codex..."
+          )
     );
 
-    const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSessionState(session));
+    const runtimeWorkspace = this.#buildRuntimeWorkspace(session);
     const images: string[] = [];
     if (input.contentType === "image") {
       const downloaded = await this.#downloadInboundImage(input);
       images.push(downloaded.tempFilePath);
     }
 
-    let activeRun!: ActiveRunContext;
-    const controller = startCodexRun({
-      executablePath: this.#codexExecutablePath,
+    const activeRunRef: { current: ActiveRunContext | null } = {
+      current: null
+    };
+    const controller = this.#startCodexController(
+      session,
       prompt,
       images,
-      resumeThreadId: session.codexThreadId,
-      rollingSummary: session.rollingSummary,
-      ...(this.#codexEnvironment ? { environment: this.#codexEnvironment } : {}),
-      runtimeContext: {
-        cwd: runtimeWorkspace.cwd,
-        extraWritableRoots: runtimeWorkspace.writableRoots.filter((root) => root !== runtimeWorkspace.cwd),
-        mode: runtimeWorkspace.mode
-      },
-      onEvent: (event) => {
+      runtimeWorkspace,
+      (event) => {
+        const activeRun = activeRunRef.current;
         if (!activeRun) {
           return;
         }
 
-        activeRun.eventTail = activeRun.eventTail.then(() => this.#handleCodexEvent(activeRun, event), () => undefined);
+        activeRun.eventTail = activeRun.eventTail.then(
+          () => this.#handleCodexEvent(activeRun, event),
+          () => undefined
+        );
       }
-    });
+    );
 
-    activeRun = {
+    const activeRun: ActiveRunContext = {
       sessionId: session.sessionId,
       chatId: input.envelope.chatId,
       userId: input.envelope.userId,
@@ -951,17 +1133,17 @@ export class BridgeRuntime {
       cancelOutcome: null,
       parkingCancelOutcome: null
     };
+    activeRunRef.current = activeRun;
     this.#activeRuns.set(session.sessionId, activeRun);
     this.#trackRunCompletion(activeRun);
   }
 
   #trackRunCompletion(activeRun: ActiveRunContext): void {
-    const completion = this.#awaitRunCompletion(activeRun)
-      .finally(() => {
-        if (this.#activeRunCompletions.get(activeRun.sessionId) === completion) {
-          this.#activeRunCompletions.delete(activeRun.sessionId);
-        }
-      });
+    const completion = this.#awaitRunCompletion(activeRun).finally(() => {
+      if (this.#activeRunCompletions.get(activeRun.sessionId) === completion) {
+        this.#activeRunCompletions.delete(activeRun.sessionId);
+      }
+    });
     this.#activeRunCompletions.set(activeRun.sessionId, completion);
   }
 
@@ -974,7 +1156,10 @@ export class BridgeRuntime {
 
       const result = await activeRun.controller.completion;
       await activeRun.eventTail;
-      if (activeRun.pendingApproval && activeRun.lifecycle === "parking_for_approval") {
+      if (
+        activeRun.pendingApproval &&
+        activeRun.lifecycle === "parking_for_approval"
+      ) {
         keepActiveRun = await this.#parkRunAwaitingApproval(activeRun, result);
         return;
       }
@@ -984,28 +1169,24 @@ export class BridgeRuntime {
       await activeRun.eventTail;
       await this.#finalizeRunFailure(activeRun, error);
     } finally {
-      if (!keepActiveRun && this.#activeRuns.get(activeRun.sessionId) === activeRun) {
-        this.#activeRuns.delete(activeRun.sessionId);
-      }
-      if (!keepActiveRun) {
-        for (const filePath of activeRun.imagePaths) {
-          await rm(filePath, { force: true });
-        }
-      }
-      if (this.#running) {
-        await this.#persistState(this.#stopping ? "stopping" : "running");
-      }
+      await this.#releaseActiveRunResources(activeRun, keepActiveRun);
+      await this.#persistRuntimeStateIfRunning();
     }
   }
 
-  async #finalizeRun(activeRun: ActiveRunContext, result: CodexRunResult): Promise<void> {
+  async #finalizeRun(
+    activeRun: ActiveRunContext,
+    result: CodexRunResult
+  ): Promise<void> {
     const actor = this.#routing.getSessionActor(activeRun.sessionId);
     if (!actor) {
       return;
     }
 
     const nowIso = this.#clock().toISOString();
-    const effectiveCancelOutcome = activeRun.cancelOutcome ?? inferCancelOutcome(actor.getSnapshot(), result, nowIso);
+    const effectiveCancelOutcome =
+      activeRun.cancelOutcome ??
+      inferCancelOutcome(actor.getSnapshot(), result, nowIso);
     if (effectiveCancelOutcome) {
       const cancelled = await actor.enqueue({
         kind: "run_cancelled",
@@ -1034,8 +1215,16 @@ export class BridgeRuntime {
         effectiveCancelOutcome.result === "full"
           ? this.#tChat(activeRun.chatId, "运行已取消。", "Run cancelled.")
           : effectiveCancelOutcome.result === "partial"
-            ? this.#tChat(activeRun.chatId, "运行已中断，取消前可能已有部分工作完成。", "Run interrupted. Some work may have completed before cancellation.")
-            : this.#tChat(activeRun.chatId, "已请求取消，但最终进程状态未知。", "Cancellation was requested, but the final process state is unknown.")
+            ? this.#tChat(
+                activeRun.chatId,
+                "运行已中断，取消前可能已有部分工作完成。",
+                "Run interrupted. Some work may have completed before cancellation."
+              )
+            : this.#tChat(
+                activeRun.chatId,
+                "已请求取消，但最终进程状态未知。",
+                "Cancellation was requested, but the final process state is unknown."
+              )
       );
       return;
     }
@@ -1071,42 +1260,44 @@ export class BridgeRuntime {
       this.#summary.refreshRollingSummary(activeRun.sessionId);
       await this.#safeFinalizePreview(
         activeRun.previewHandle,
-        result.finalMessage
-          ?? (result.staleRecovered
+        result.finalMessage ??
+          (result.staleRecovered
             ? "Codex recovered the thread context but did not emit a final message."
             : "Codex completed without a final message.")
       );
       return;
     }
 
-    await this.#finalizeRunFailure(activeRun, new Error(`Codex exited with status ${String(result.exitCode)}`));
+    await this.#finalizeRunFailure(
+      activeRun,
+      new Error(`Codex exited with status ${String(result.exitCode)}`)
+    );
   }
 
-  async #finalizeRunFailure(activeRun: ActiveRunContext, error: unknown): Promise<void> {
-    const actor = this.#routing.getSessionActor(activeRun.sessionId);
-    if (!actor) {
-      return;
-    }
-
-    const failedAt = this.#clock().toISOString();
-    const failed = await actor.enqueue({
-      kind: "run_failed",
-      runId: activeRun.runId,
-      failedAt
-    });
+  async #finalizeRunFailure(
+    activeRun: ActiveRunContext,
+    error: unknown
+  ): Promise<void> {
     const message = getErrorMessage(error);
-    this.#syncSessionSnapshot(activeRun.sessionId, failed.snapshot, {
-      lastError: message,
-      updatedAt: failedAt
-    });
+    await this.#markRunFailed(activeRun.sessionId, activeRun.runId, message);
     this.#summary.refreshRollingSummary(activeRun.sessionId);
-    await this.#safeFinalizePreview(activeRun.previewHandle, `Run failed: ${message}`);
+    await this.#safeFinalizePreview(
+      activeRun.previewHandle,
+      `Run failed: ${message}`
+    );
   }
 
-  async #handleCodexEvent(activeRun: ActiveRunContext, event: CodexNormalizedEvent): Promise<void> {
+  async #handleCodexEvent(
+    activeRun: ActiveRunContext,
+    event: CodexNormalizedEvent
+  ): Promise<void> {
     this.#pollMetrics = {
       ...this.#pollMetrics,
-      lastEvent: formatCodexEventMetric(event, activeRun.sessionId, this.#config.defaults.includeRuntimeIdentifiers)
+      lastEvent: formatCodexEventMetric(
+        event,
+        activeRun.sessionId,
+        this.#config.defaults.includeRuntimeIdentifiers
+      )
     };
 
     switch (event.kind) {
@@ -1125,7 +1316,10 @@ export class BridgeRuntime {
           },
           buildAgentTextAuditPayload(event.text)
         );
-        activeRun.previewHandle = await this.#preview.updatePreview(activeRun.previewHandle, event.text);
+        activeRun.previewHandle = await this.#preview.updatePreview(
+          activeRun.previewHandle,
+          event.text
+        );
         return;
       case "approval_request":
         await this.#handleCodexApprovalRequest(activeRun, event);
@@ -1157,15 +1351,24 @@ export class BridgeRuntime {
       return;
     }
 
-    const created = this.#approval.createPendingApproval({
-      sessionId: activeRun.sessionId,
-      runId: activeRun.runId,
-      chatId: activeRun.chatId,
-      userId: activeRun.userId,
-      sourceMessageId: String(activeRun.previewHandle.previewMessageId ?? `run:${activeRun.runId}`),
-      toolName: "exec_command",
-      summary: buildStoredApprovalSummary("exec_command", event.summary, this.#config.defaults.auditLevel)
-    }, this.#languageForChat(activeRun.chatId));
+    const created = this.#approval.createPendingApproval(
+      {
+        sessionId: activeRun.sessionId,
+        runId: activeRun.runId,
+        chatId: activeRun.chatId,
+        userId: activeRun.userId,
+        sourceMessageId: String(
+          activeRun.previewHandle.previewMessageId ?? `run:${activeRun.runId}`
+        ),
+        toolName: "exec_command",
+        summary: buildStoredApprovalSummary(
+          "exec_command",
+          event.summary,
+          this.#config.defaults.auditLevel
+        )
+      },
+      this.#languageForChat(activeRun.chatId)
+    );
 
     const requested = await actor.enqueue({
       kind: "approval_requested",
@@ -1199,10 +1402,19 @@ export class BridgeRuntime {
       permissionId: created.permission.permissionId,
       toolName: created.permission.toolName
     });
-    await this.#sendApprovalRequestMessage(activeRun, created.permission, created.replyMarkup, event.summary);
+    await this.#sendApprovalRequestMessage(
+      activeRun,
+      created.permission,
+      created.replyMarkup,
+      event.summary
+    );
     activeRun.previewHandle = await this.#preview.updatePreview(
       activeRun.previewHandle,
-      this.#tChat(activeRun.chatId, `等待批准：${event.summary}`, `Waiting for approval: ${event.summary}`)
+      this.#tChat(
+        activeRun.chatId,
+        `等待批准：${event.summary}`,
+        `Waiting for approval: ${event.summary}`
+      )
     );
     this.#summary.refreshRollingSummary(activeRun.sessionId);
     await this.#persistState("running");
@@ -1223,28 +1435,57 @@ export class BridgeRuntime {
     commandSummary: string
   ): Promise<void> {
     const lines = [
-      this.#tChat(activeRun.chatId, "Codex 继续执行前需要审批。", "Codex needs approval before it can continue."),
-      this.#tChat(activeRun.chatId, `命令：${commandSummary}`, `Command: ${commandSummary}`),
-      this.#tChat(activeRun.chatId, `权限 ID：${permission.permissionId}`, `Permission ID: ${permission.permissionId}`),
-      this.#tChat(activeRun.chatId, "请使用下方按钮，或执行 /perm approve <permission_id>。", "Use the buttons below or /perm approve <permission_id>.")
+      this.#tChat(
+        activeRun.chatId,
+        "Codex 继续执行前需要审批。",
+        "Codex needs approval before it can continue."
+      ),
+      this.#tChat(
+        activeRun.chatId,
+        `命令：${commandSummary}`,
+        `Command: ${commandSummary}`
+      ),
+      this.#tChat(
+        activeRun.chatId,
+        `权限 ID：${permission.permissionId}`,
+        `Permission ID: ${permission.permissionId}`
+      ),
+      this.#tChat(
+        activeRun.chatId,
+        "请使用下方按钮，或执行 /perm approve <permission_id>。",
+        "Use the buttons below or /perm approve <permission_id>."
+      )
     ];
 
     try {
-      await this.#telegramClient.sendMessage(activeRun.chatId, lines.join("\n"), { replyMarkup });
+      await this.#telegramClient.sendMessage(
+        activeRun.chatId,
+        lines.join("\n"),
+        { replyMarkup }
+      );
     } catch (error) {
-      this.#logger.warn("Failed to send approval keyboard, falling back to plain text.", {
-        permissionId: permission.permissionId,
-        error
-      });
-      await this.#sendText(activeRun.chatId, [
-        ...lines,
-        `/perm approve ${permission.permissionId}`,
-        `/perm deny ${permission.permissionId}`
-      ].join("\n"));
+      this.#logger.warn(
+        "Failed to send approval keyboard, falling back to plain text.",
+        {
+          permissionId: permission.permissionId,
+          error
+        }
+      );
+      await this.#sendText(
+        activeRun.chatId,
+        [
+          ...lines,
+          `/perm approve ${permission.permissionId}`,
+          `/perm deny ${permission.permissionId}`
+        ].join("\n")
+      );
     }
   }
 
-  async #parkRunAwaitingApproval(activeRun: ActiveRunContext, result: CodexRunResult): Promise<boolean> {
+  async #parkRunAwaitingApproval(
+    activeRun: ActiveRunContext,
+    result: CodexRunResult
+  ): Promise<boolean> {
     if (!activeRun.pendingApproval) {
       return false;
     }
@@ -1274,13 +1515,19 @@ export class BridgeRuntime {
     return true;
   }
 
-  async #handleRuntimeApprovalResolution(resolution: ApprovalResolutionResult): Promise<void> {
+  async #handleRuntimeApprovalResolution(
+    resolution: ApprovalResolutionResult
+  ): Promise<void> {
     if (!resolution.permission) {
       return;
     }
 
     const activeRun = this.#activeRuns.get(resolution.permission.sessionId);
-    if (!activeRun?.pendingApproval || activeRun.pendingApproval.permissionId !== resolution.permission.permissionId) {
+    if (
+      !activeRun?.pendingApproval ||
+      activeRun.pendingApproval.permissionId !==
+        resolution.permission.permissionId
+    ) {
       return;
     }
 
@@ -1293,9 +1540,13 @@ export class BridgeRuntime {
     }
 
     if (resolution.status === "denied" || resolution.status === "stale") {
-      activeRun.pendingApproval.decision = resolution.status === "denied" ? "deny" : "expired";
+      activeRun.pendingApproval.decision =
+        resolution.status === "denied" ? "deny" : "expired";
       if (activeRun.lifecycle === "awaiting_approval") {
-        await this.#finalizeAwaitingApprovalRun(activeRun, activeRun.pendingApproval.decision);
+        await this.#finalizeAwaitingApprovalRun(
+          activeRun,
+          activeRun.pendingApproval.decision
+        );
       }
     }
   }
@@ -1307,7 +1558,10 @@ export class BridgeRuntime {
     }
 
     const activeRun = this.#activeRuns.get(permission.sessionId);
-    if (!activeRun?.pendingApproval || activeRun.pendingApproval.permissionId !== permissionId) {
+    if (
+      !activeRun?.pendingApproval ||
+      activeRun.pendingApproval.permissionId !== permissionId
+    ) {
       return;
     }
 
@@ -1329,36 +1583,41 @@ export class BridgeRuntime {
 
     const validationError = await this.#validateSessionForRun(session);
     if (validationError) {
-      await this.#finalizeAwaitingApprovalRun(activeRun, "expired", validationError);
+      await this.#finalizeAwaitingApprovalRun(
+        activeRun,
+        "expired",
+        validationError
+      );
       return;
     }
 
-    const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSessionState(session));
-    const continuationPrompt = buildApprovalResumePrompt(activeRun.pendingApproval.summary);
+    const runtimeWorkspace = this.#buildRuntimeWorkspace(session);
+    const continuationPrompt = buildApprovalResumePrompt(
+      activeRun.pendingApproval.summary
+    );
 
-    let resumedRun!: ActiveRunContext;
-    const controller = startCodexRun({
-      executablePath: this.#codexExecutablePath,
-      prompt: continuationPrompt,
-      images: [],
-      resumeThreadId: session.codexThreadId,
-      rollingSummary: session.rollingSummary,
-      ...(this.#codexEnvironment ? { environment: this.#codexEnvironment } : {}),
-      runtimeContext: {
-        cwd: runtimeWorkspace.cwd,
-        extraWritableRoots: runtimeWorkspace.writableRoots.filter((root) => root !== runtimeWorkspace.cwd),
-        mode: runtimeWorkspace.mode
-      },
-      onEvent: (event) => {
+    const resumedRunRef: { current: ActiveRunContext | null } = {
+      current: null
+    };
+    const controller = this.#startCodexController(
+      session,
+      continuationPrompt,
+      [],
+      runtimeWorkspace,
+      (event) => {
+        const resumedRun = resumedRunRef.current;
         if (!resumedRun) {
           return;
         }
 
-        resumedRun.eventTail = resumedRun.eventTail.then(() => this.#handleCodexEvent(resumedRun, event), () => undefined);
+        resumedRun.eventTail = resumedRun.eventTail.then(
+          () => this.#handleCodexEvent(resumedRun, event),
+          () => undefined
+        );
       }
-    });
+    );
 
-    resumedRun = {
+    const resumedRun: ActiveRunContext = {
       ...activeRun,
       controller,
       eventTail: Promise.resolve(),
@@ -1367,6 +1626,7 @@ export class BridgeRuntime {
       cancelOutcome: null,
       parkingCancelOutcome: null
     };
+    resumedRunRef.current = resumedRun;
     this.#activeRuns.set(activeRun.sessionId, resumedRun);
     this.#trackRunCompletion(resumedRun);
     resumedRun.previewHandle = await this.#preview.updatePreview(
@@ -1381,18 +1641,53 @@ export class BridgeRuntime {
     outcome: "deny" | "expired",
     explicitMessage?: string
   ): Promise<void> {
-    const actor = this.#routing.getSessionActor(activeRun.sessionId);
-    if (actor) {
-      const failedAt = this.#clock().toISOString();
-      const failed = await actor.enqueue({
-        kind: "run_failed",
-        runId: activeRun.runId,
-        failedAt
-      });
-      this.#syncSessionSnapshot(activeRun.sessionId, failed.snapshot, {
-        lastError: explicitMessage ?? (outcome === "deny" ? "Approval denied." : "Approval expired."),
-        updatedAt: failedAt
-      });
+    await this.#markRunFailed(
+      activeRun.sessionId,
+      activeRun.runId,
+      explicitMessage ??
+        (outcome === "deny" ? "Approval denied." : "Approval expired.")
+    );
+
+    await this.#releaseActiveRunResources(activeRun);
+    this.#summary.refreshRollingSummary(activeRun.sessionId);
+    await this.#safeFinalizePreview(
+      activeRun.previewHandle,
+      explicitMessage ??
+        (outcome === "deny"
+          ? "Approval denied. The run was stopped."
+          : "Approval expired. The run was stopped.")
+    );
+    await this.#persistRuntimeStateIfRunning();
+  }
+
+  async #markRunFailed(
+    sessionId: string,
+    runId: string,
+    lastError: string
+  ): Promise<void> {
+    const actor = this.#routing.getSessionActor(sessionId);
+    if (!actor) {
+      return;
+    }
+
+    const failedAt = this.#clock().toISOString();
+    const failed = await actor.enqueue({
+      kind: "run_failed",
+      runId,
+      failedAt
+    });
+    this.#syncSessionSnapshot(sessionId, failed.snapshot, {
+      lastError,
+      updatedAt: failedAt
+    });
+  }
+
+  async #releaseActiveRunResources(
+    activeRun: ActiveRunContext,
+    keepActiveRun = false
+  ): Promise<void> {
+    if (keepActiveRun) {
+      return;
     }
 
     if (this.#activeRuns.get(activeRun.sessionId) === activeRun) {
@@ -1401,24 +1696,39 @@ export class BridgeRuntime {
     for (const filePath of activeRun.imagePaths) {
       await rm(filePath, { force: true });
     }
-    this.#summary.refreshRollingSummary(activeRun.sessionId);
-    await this.#safeFinalizePreview(
-      activeRun.previewHandle,
-      explicitMessage ?? (outcome === "deny" ? "Approval denied. The run was stopped." : "Approval expired. The run was stopped.")
-    );
-    if (this.#running) {
-      await this.#persistState(this.#stopping ? "stopping" : "running");
-    }
   }
 
-  #recordExecCommandBegin(activeRun: ActiveRunContext, event: CodexExecCommandBeginEvent): void {
+  async #persistRuntimeStateIfRunning(): Promise<void> {
+    if (!this.#running) {
+      return;
+    }
+
+    await this.#persistState(this.#stopping ? "stopping" : "running");
+  }
+
+  #isStoppingAbortError(error: unknown): boolean {
+    return this.#stopping && isAbortError(error);
+  }
+
+  #shouldStopRunLoop(): boolean {
+    return this.#stopping;
+  }
+
+  #recordExecCommandBegin(
+    activeRun: ActiveRunContext,
+    event: CodexExecCommandBeginEvent
+  ): void {
     this.#audit.recordShellExec(
       {
         chatId: activeRun.chatId,
         sessionId: activeRun.sessionId,
         runId: activeRun.runId
       },
-      buildShellExecAuditPayload(event.command, null, this.#config.defaults.auditLevel)
+      buildShellExecAuditPayload(
+        event.command,
+        null,
+        this.#config.defaults.auditLevel
+      )
     );
     this.#audit.recordToolStart(
       {
@@ -1426,11 +1736,18 @@ export class BridgeRuntime {
         sessionId: activeRun.sessionId,
         runId: activeRun.runId
       },
-      buildToolStartAuditPayload("exec_command", event.command.join(" "), this.#config.defaults.auditLevel)
+      buildToolStartAuditPayload(
+        "exec_command",
+        event.command.join(" "),
+        this.#config.defaults.auditLevel
+      )
     );
   }
 
-  #recordExecCommandEnd(activeRun: ActiveRunContext, event: CodexExecCommandEndEvent): void {
+  #recordExecCommandEnd(
+    activeRun: ActiveRunContext,
+    event: CodexExecCommandEndEvent
+  ): void {
     this.#audit.recordToolResult(
       {
         chatId: activeRun.chatId,
@@ -1440,7 +1757,10 @@ export class BridgeRuntime {
       {
         toolName: "exec_command",
         status: event.exitCode === 0 ? "success" : "error",
-        ...buildToolResultDetail(event.aggregatedOutput, this.#config.defaults.auditLevel)
+        ...buildToolResultDetail(
+          event.aggregatedOutput,
+          this.#config.defaults.auditLevel
+        )
       }
     );
     this.#audit.recordShellExec(
@@ -1449,11 +1769,18 @@ export class BridgeRuntime {
         sessionId: activeRun.sessionId,
         runId: activeRun.runId
       },
-      buildShellExecAuditPayload(event.command, event.exitCode, this.#config.defaults.auditLevel)
+      buildShellExecAuditPayload(
+        event.command,
+        event.exitCode,
+        this.#config.defaults.auditLevel
+      )
     );
   }
 
-  #recordPatchApplyBegin(activeRun: ActiveRunContext, event: CodexPatchApplyBeginEvent): void {
+  #recordPatchApplyBegin(
+    activeRun: ActiveRunContext,
+    event: CodexPatchApplyBeginEvent
+  ): void {
     this.#audit.recordToolResult(
       {
         chatId: activeRun.chatId,
@@ -1463,12 +1790,18 @@ export class BridgeRuntime {
       {
         toolName: "patch_apply",
         status: "success",
-        ...buildToolResultDetail(event.changedPaths.join(", "), this.#config.defaults.auditLevel)
+        ...buildToolResultDetail(
+          event.changedPaths.join(", "),
+          this.#config.defaults.auditLevel
+        )
       }
     );
   }
 
-  async #safeBeginPreview(chatId: string, text: string): Promise<TelegramPreviewHandle> {
+  async #safeBeginPreview(
+    chatId: string,
+    text: string
+  ): Promise<TelegramPreviewHandle> {
     try {
       return await this.#preview.beginPreview(chatId, text);
     } catch (error) {
@@ -1481,7 +1814,10 @@ export class BridgeRuntime {
     }
   }
 
-  async #safeFinalizePreview(handle: TelegramPreviewHandle, finalText: string): Promise<void> {
+  async #safeFinalizePreview(
+    handle: TelegramPreviewHandle,
+    finalText: string
+  ): Promise<void> {
     try {
       await this.#preview.finalizePreview(handle, finalText);
     } catch (error) {
@@ -1490,13 +1826,72 @@ export class BridgeRuntime {
     }
   }
 
-  async #validateSessionForRun(session: SessionRecord): Promise<string | null> {
-    const validation = await validateWorkspaceSession(toWorkspaceSessionState(session), {
-      inspector: this.#filesystemInspector,
-      ...(this.#visiblePolicy ? { visiblePolicy: this.#visiblePolicy } : {}),
-      requireExistingPaths: true
+  #buildRuntimeWorkspace(session: SessionRecord) {
+    return buildRuntimeWorkspaceContext(toWorkspaceSessionState(session));
+  }
+
+  #buildCodexRuntimeContext(
+    runtimeWorkspace: ReturnType<typeof buildRuntimeWorkspaceContext>
+  ) {
+    return {
+      cwd: runtimeWorkspace.cwd,
+      extraWritableRoots: runtimeWorkspace.writableRoots.filter(
+        (root) => root !== runtimeWorkspace.cwd
+      ),
+      mode: runtimeWorkspace.mode
+    };
+  }
+
+  #startCodexController(
+    session: SessionRecord,
+    prompt: string,
+    images: readonly string[],
+    runtimeWorkspace: ReturnType<typeof buildRuntimeWorkspaceContext>,
+    onEvent: (event: CodexNormalizedEvent) => void
+  ): CodexRunController {
+    return startCodexRun({
+      executablePath: this.#codexExecutablePath,
+      prompt,
+      images,
+      resumeThreadId: session.codexThreadId,
+      rollingSummary: session.rollingSummary,
+      ...(this.#codexEnvironment
+        ? { environment: this.#codexEnvironment }
+        : {}),
+      runtimeContext: this.#buildCodexRuntimeContext(runtimeWorkspace),
+      onEvent
     });
-    const blockingIssues = validation.issues.filter((issue) => issue.code !== "path_not_normalized");
+  }
+
+  #ensurePersistedRoutingSessionSnapshot(
+    sessionId: string
+  ): SessionActorSnapshot | null {
+    const existingSnapshot = this.#routing.getSessionSnapshot(sessionId);
+    if (existingSnapshot) {
+      return existingSnapshot;
+    }
+
+    const persistedSession = this.#store.sessions.get(sessionId);
+    return persistedSession
+      ? this.#routing.registerSession(
+          sessionId,
+          buildPersistedSessionActorSnapshot(this.#store, persistedSession)
+        )
+      : null;
+  }
+
+  async #validateSessionForRun(session: SessionRecord): Promise<string | null> {
+    const validation = await validateWorkspaceSession(
+      toWorkspaceSessionState(session),
+      {
+        inspector: this.#filesystemInspector,
+        ...(this.#visiblePolicy ? { visiblePolicy: this.#visiblePolicy } : {}),
+        requireExistingPaths: true
+      }
+    );
+    const blockingIssues = validation.issues.filter(
+      (issue) => issue.code !== "path_not_normalized"
+    );
     if (blockingIssues.length === 0) {
       return null;
     }
@@ -1510,11 +1905,17 @@ export class BridgeRuntime {
     );
   }
 
-  async #downloadInboundImage(input: ImageUserInput): Promise<{ readonly tempFilePath: string }> {
+  async #downloadInboundImage(
+    input: ImageUserInput
+  ): Promise<{ readonly tempFilePath: string }> {
     await mkdir(this.#config.paths.tempDir, { recursive: true });
-    const telegramFile = await this.#telegramClient.getFile(input.telegramFileId);
+    const telegramFile = await this.#telegramClient.getFile(
+      input.telegramFileId
+    );
     if (!telegramFile.file_path) {
-      throw new Error(`Telegram file path is missing for ${input.telegramFileId}.`);
+      throw new Error(
+        `Telegram file path is missing for ${input.telegramFileId}.`
+      );
     }
 
     const fileSize = telegramFile.file_size ?? 0;
@@ -1524,9 +1925,17 @@ export class BridgeRuntime {
       );
     }
 
-    const extension = resolveTempExtension(input.mimeType ?? "image/jpeg", telegramFile.file_path);
-    const tempFilePath = join(this.#config.paths.tempDir, `telegram-media-${randomUUID()}${extension}`);
-    const fileContents = await this.#telegramClient.downloadFile(telegramFile.file_path);
+    const extension = resolveTempExtension(
+      input.mimeType ?? "image/jpeg",
+      telegramFile.file_path
+    );
+    const tempFilePath = join(
+      this.#config.paths.tempDir,
+      `telegram-media-${randomUUID()}${extension}`
+    );
+    const fileContents = await this.#telegramClient.downloadFile(
+      telegramFile.file_path
+    );
     await writeFile(tempFilePath, fileContents);
 
     return {
@@ -1562,7 +1971,11 @@ export class BridgeRuntime {
         await this.#finalizeAwaitingApprovalRun(
           activeRun,
           "expired",
-          this.#tChat(activeRun.chatId, "运行在等待审批时已取消。", "Run cancelled while waiting for approval.")
+          this.#tChat(
+            activeRun.chatId,
+            "运行在等待审批时已取消。",
+            "Run cancelled while waiting for approval."
+          )
         );
       }
       return;
@@ -1584,19 +1997,13 @@ function createSessionRunKey(sessionId: string, runId: string): string {
   return `${sessionId}\u0000${runId}`;
 }
 
-function createAddDirConfirmationKey(chatId: string, userId: string, sessionId: string, path: string): string {
+function createAddDirConfirmationKey(
+  chatId: string,
+  userId: string,
+  sessionId: string,
+  path: string
+): string {
   return `${chatId}\u0000${userId}\u0000${sessionId}\u0000${path.trim()}`;
-}
-
-function renderCancellationMessage(cancelOutcome: CodexCancelOutcome): string {
-  switch (cancelOutcome.result) {
-    case "full":
-      return "Run cancelled.";
-    case "partial":
-      return "Run interrupted. Some work may have completed before cancellation.";
-    case "unknown":
-      return "Cancellation was requested, but the final process state is unknown.";
-  }
 }
 
 function inferCancelOutcome(
@@ -1610,12 +2017,19 @@ function inferCancelOutcome(
 
   return {
     requestedAt,
-    result: result.exitCode === null ? "partial" : result.exitCode === 0 ? "full" : "unknown",
+    result:
+      result.exitCode === null
+        ? "partial"
+        : result.exitCode === 0
+          ? "full"
+          : "unknown",
     exited: result.exitCode !== null
   };
 }
 
-function buildPromptFromInput(input: Extract<NormalizedInboundMessage, { readonly type: "user_input" }>): string {
+function buildPromptFromInput(
+  input: Extract<NormalizedInboundMessage, { readonly type: "user_input" }>
+): string {
   if (input.contentType === "text") {
     return input.text;
   }
@@ -1634,7 +2048,9 @@ function buildApprovalResumePrompt(summary: string): string {
   ].join("\n");
 }
 
-function extractCommandArgs(command: NormalizedCommandRequest): readonly string[] {
+function extractCommandArgs(
+  command: NormalizedCommandRequest
+): readonly string[] {
   switch (command.command) {
     case "bind":
       return [command.targetSessionId];
@@ -1663,27 +2079,42 @@ function extractSessionId(result: CommandExecutionResult): string | null {
     return String(result.session.sessionId);
   }
 
-  if (result.data && typeof result.data === "object" && "sessionId" in result.data) {
+  if (
+    result.data &&
+    typeof result.data === "object" &&
+    "sessionId" in result.data
+  ) {
     return String((result.data as { readonly sessionId: string }).sessionId);
   }
 
   return null;
 }
 
-function renderCommandResult(command: NormalizedCommandRequest, result: CommandExecutionResult): string {
+function renderCommandResult(
+  command: NormalizedCommandRequest,
+  result: CommandExecutionResult
+): string {
   const lines = [result.message];
   if (result.issues && result.issues.length > 0) {
-    lines.push(...result.issues.map((issue) => `- ${issue.field}: ${issue.message}`));
+    lines.push(
+      ...result.issues.map((issue) => `- ${issue.field}: ${issue.message}`)
+    );
   }
 
-  if (command.command === "adddir" && result.status === "confirmation_required") {
+  if (
+    command.command === "adddir" &&
+    result.status === "confirmation_required"
+  ) {
     lines.push("Repeat the same /adddir command within 2 minutes to confirm.");
   }
 
   return lines.join("\n");
 }
 
-function formatInboundEventMetric(envelope: TelegramInboundEnvelope, includeRuntimeIdentifiers: boolean): string {
+function formatInboundEventMetric(
+  envelope: TelegramInboundEnvelope,
+  includeRuntimeIdentifiers: boolean
+): string {
   return includeRuntimeIdentifiers
     ? `${envelope.inboundMessage.type}:${envelope.chatId}`
     : envelope.inboundMessage.type;
@@ -1694,9 +2125,7 @@ function formatCodexEventMetric(
   sessionId: string,
   includeRuntimeIdentifiers: boolean
 ): string {
-  return includeRuntimeIdentifiers
-    ? `${event.kind}:${sessionId}`
-    : event.kind;
+  return includeRuntimeIdentifiers ? `${event.kind}:${sessionId}` : event.kind;
 }
 
 function buildUserCommandAuditPayload(
@@ -1751,9 +2180,7 @@ function buildStoredApprovalSummary(
   summary: string,
   auditLevel: AppConfig["defaults"]["auditLevel"]
 ): string {
-  return auditLevel === "debug"
-    ? summary
-    : `${toolName} approval request`;
+  return auditLevel === "debug" ? summary : `${toolName} approval request`;
 }
 
 function buildFileChangeAuditPayload(
@@ -1764,9 +2191,7 @@ function buildFileChangeAuditPayload(
   readonly changeType: "cwd" | "adddir" | "workspace_root";
   readonly nextPath?: string;
 } {
-  return auditLevel === "debug"
-    ? { changeType, nextPath }
-    : { changeType };
+  return auditLevel === "debug" ? { changeType, nextPath } : { changeType };
 }
 
 function buildResumeRecoveryAuditPayload(
@@ -1840,7 +2265,10 @@ function buildToolResultDetail(
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
 }
 
 function resolveTempExtension(mimeType: string, filePath: string): string {

@@ -14,7 +14,7 @@ export type SessionRunState =
 export type SessionCancellationResult = "full" | "partial" | "unknown";
 export type PendingPermissionResolution = "approved" | "denied" | "expired";
 
-export type AuditEventType =
+export type KnownAuditEventType =
   | "user_input"
   | "user_command"
   | "approval_decision"
@@ -26,6 +26,7 @@ export type AuditEventType =
   | "session_rebind"
   | "run_cancel"
   | "resume_recovery";
+export type AuditEventType = KnownAuditEventType | (string & {});
 
 export interface SessionRecord {
   readonly sessionId: string;
@@ -186,7 +187,7 @@ export interface AuditLogRecord<TPayload = unknown> {
   readonly sessionId: string | null;
   readonly chatId: string | null;
   readonly runId: string | null;
-  readonly eventType: AuditEventType | string;
+  readonly eventType: AuditEventType;
   readonly payload: TPayload | null;
   readonly createdAt: string;
 }
@@ -195,7 +196,7 @@ export interface AuditLogCreateInput<TPayload = unknown> {
   readonly sessionId?: string | null;
   readonly chatId?: string | null;
   readonly runId?: string | null;
-  readonly eventType: AuditEventType | string;
+  readonly eventType: AuditEventType;
   readonly payload?: TPayload | null;
   readonly createdAt?: string;
 }
@@ -208,7 +209,7 @@ export interface AuditLogFilter {
 }
 
 export interface AuditLogEventLimit {
-  readonly eventType: AuditEventType | string;
+  readonly eventType: AuditEventType;
   readonly limit: number;
 }
 
@@ -307,16 +308,27 @@ export interface TelegramUserAuthRepository {
   get(userId: string): TelegramUserAuthRecord | null;
   findByChatId(chatId: string): TelegramUserAuthRecord | null;
   list(): readonly TelegramUserAuthRecord[];
-  getOrCreateFirstSeen(input: TelegramUserFirstSeenInput): TelegramUserAuthRecord;
+  getOrCreateFirstSeen(
+    input: TelegramUserFirstSeenInput
+  ): TelegramUserAuthRecord;
   markVerified(input: TelegramUserVerificationInput): TelegramUserAuthRecord;
-  setPreferredLanguage(input: TelegramUserLanguagePreferenceInput): TelegramUserAuthRecord;
-  recordFailedAttempt(input: TelegramUserFailedAttemptInput): TelegramUserAuthRecord;
+  setPreferredLanguage(
+    input: TelegramUserLanguagePreferenceInput
+  ): TelegramUserAuthRecord;
+  recordFailedAttempt(
+    input: TelegramUserFailedAttemptInput
+  ): TelegramUserAuthRecord;
 }
 
 export interface AuditLogsRepository {
-  append<TPayload = unknown>(input: AuditLogCreateInput<TPayload>): AuditLogRecord<TPayload>;
+  append<TPayload = unknown>(
+    input: AuditLogCreateInput<TPayload>
+  ): AuditLogRecord<TPayload>;
   list(filter?: AuditLogFilter): readonly AuditLogRecord[];
-  listRecentByEventType(sessionId: string, limits: readonly AuditLogEventLimit[]): readonly AuditLogRecord[];
+  listRecentByEventType(
+    sessionId: string,
+    limits: readonly AuditLogEventLimit[]
+  ): readonly AuditLogRecord[];
   pruneOlderThan(before: string): number;
   pruneToMaxRows(maxRows: number): number;
 }

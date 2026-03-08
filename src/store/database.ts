@@ -66,11 +66,15 @@ export class BridgeDatabase {
   }
 }
 
-export function getDefaultDatabaseFilePath(config: Pick<AppConfig, "paths">): string {
+export function getDefaultDatabaseFilePath(
+  config: Pick<AppConfig, "paths">
+): string {
   return join(config.paths.dataDir, "bridge.sqlite3");
 }
 
-export function openBridgeDatabase(options: OpenBridgeDatabaseOptions): BridgeDatabase {
+export function openBridgeDatabase(
+  options: OpenBridgeDatabaseOptions
+): BridgeDatabase {
   if (options.createDirectory ?? true) {
     mkdirSync(dirname(options.filePath), { recursive: true });
   }

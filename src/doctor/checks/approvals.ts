@@ -1,7 +1,13 @@
-import type { BridgeStore, PendingPermissionRecord } from "../../store/types.js";
+import type {
+  BridgeStore,
+  PendingPermissionRecord
+} from "../../store/types.js";
 import type { DoctorCheck } from "../types.js";
 
-export function buildApprovalsCheck(store: BridgeStore | undefined, now: Date): DoctorCheck {
+export function buildApprovalsCheck(
+  store: BridgeStore | undefined,
+  now: Date
+): DoctorCheck {
   if (!store) {
     return {
       id: "approvals",
@@ -31,9 +37,12 @@ export function buildApprovalsCheck(store: BridgeStore | undefined, now: Date): 
     label: "pending approvals",
     status: "warning",
     summary: `${staleApprovals.length} stale unresolved approval(s) detected.`,
-    details: staleApprovals.slice(0, 10).map((record) => (
-      `${record.permissionId} | session=${record.sessionId} | run=${record.runId} | expired=${record.expiresAt}`
-    ))
+    details: staleApprovals
+      .slice(0, 10)
+      .map(
+        (record) =>
+          `${record.permissionId} | session=${record.sessionId} | run=${record.runId} | expired=${record.expiresAt}`
+      )
   };
 }
 

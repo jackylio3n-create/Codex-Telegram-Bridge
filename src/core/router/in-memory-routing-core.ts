@@ -16,7 +16,9 @@ import type {
 } from "../types/index.js";
 import { ChatGate } from "./chat-gate.js";
 
-const ACTIVE_SESSION_ALLOWED_COMMANDS = new Set<NormalizedCommandRequest["command"]>(["help", "status", "stop"]);
+const ACTIVE_SESSION_ALLOWED_COMMANDS = new Set<
+  NormalizedCommandRequest["command"]
+>(["help", "status", "stop"]);
 
 export class InMemoryRoutingCore {
   private readonly actors = new Map<string, SessionActor>();
@@ -25,13 +27,18 @@ export class InMemoryRoutingCore {
   private readonly sessionIdFactory: () => string;
 
   public constructor(options: RoutingCoreOptions = {}) {
-    this.sessionIdFactory = options.sessionIdFactory ?? (() => {
-      this.sessionCounter += 1;
-      return `session-${this.sessionCounter}`;
-    });
+    this.sessionIdFactory =
+      options.sessionIdFactory ??
+      (() => {
+        this.sessionCounter += 1;
+        return `session-${this.sessionCounter}`;
+      });
   }
 
-  public registerSession(sessionId: string, snapshot?: SessionActorSnapshot): SessionActorSnapshot {
+  public registerSession(
+    sessionId: string,
+    snapshot?: SessionActorSnapshot
+  ): SessionActorSnapshot {
     const actor = this.ensureActor(sessionId, snapshot);
     return actor.getSnapshot();
   }
@@ -58,7 +65,9 @@ export class InMemoryRoutingCore {
     return this.actors.get(sessionId)?.getSnapshot() ?? null;
   }
 
-  public async dispatch(message: NormalizedInboundMessage): Promise<RoutingDispatchResult> {
+  public async dispatch(
+    message: NormalizedInboundMessage
+  ): Promise<RoutingDispatchResult> {
     switch (message.type) {
       case "user_input":
         return this.routeUserInput(message);
@@ -69,16 +78,16 @@ export class InMemoryRoutingCore {
     }
   }
 
-  private async routeCommand(command: NormalizedCommandRequest): Promise<RoutingDispatchResult> {
+  private async routeCommand(
+    command: NormalizedCommandRequest
+  ): Promise<RoutingDispatchResult> {
     switch (command.command) {
       case "bind":
-        return this.handleBindCommand(
-          {
-            chatId: command.envelope.chatId,
-            targetSessionId: command.targetSessionId,
-            command
-          },
-        );
+        return this.handleBindCommand({
+          chatId: command.envelope.chatId,
+          targetSessionId: command.targetSessionId,
+          command
+        });
       case "new":
         return this.handleNewCommand(command);
       case "stop":
@@ -95,7 +104,9 @@ export class InMemoryRoutingCore {
     }
   }
 
-  private async handleNewCommand(command: NewCommandRequest): Promise<RoutingDispatchResult> {
+  private async handleNewCommand(
+    command: NewCommandRequest
+  ): Promise<RoutingDispatchResult> {
     const targetSessionId = command.targetSessionId ?? this.sessionIdFactory();
     const gateResult = await this.chatGate.createAndBindSession(
       {
@@ -125,14 +136,18 @@ export class InMemoryRoutingCore {
     return mergeResults(gateResult.binding, createdResult, gateResult.effects);
   }
 
-  private async handleBindCommand(
-    request: {
-      readonly chatId: string;
-      readonly targetSessionId: string;
-      readonly command: Extract<NormalizedCommandRequest, { readonly command: "bind" }>;
-    }
-  ): Promise<RoutingDispatchResult> {
-    const gateResult = await this.chatGate.bindExistingSession(request, this.actors);
+  private async handleBindCommand(request: {
+    readonly chatId: string;
+    readonly targetSessionId: string;
+    readonly command: Extract<
+      NormalizedCommandRequest,
+      { readonly command: "bind" }
+    >;
+  }): Promise<RoutingDispatchResult> {
+    const gateResult = await this.chatGate.bindExistingSession(
+      request,
+      this.actors
+    );
     if (hasCommandRejection(gateResult.effects)) {
       return gateResult;
     }
@@ -157,7 +172,10 @@ export class InMemoryRoutingCore {
   ): Promise<RoutingDispatchResult> {
     const actor = this.resolveBoundActor(message.envelope.chatId);
     if (!actor) {
-      return rejectMissingBinding(message.envelope.chatId, "No session is currently bound for user input.");
+      return rejectMissingBinding(
+        message.envelope.chatId,
+        "No session is currently bound for user input."
+      );
     }
 
     const dispatchResult = await actor.enqueue({
@@ -165,22 +183,42 @@ export class InMemoryRoutingCore {
       input: message
     });
 
-    return mergeResults(this.chatGate.getBinding(message.envelope.chatId), dispatchResult);
+    return mergeResults(
+      this.chatGate.getBinding(message.envelope.chatId),
+      dispatchResult
+    );
   }
 
-  private async routeBoundCommand(command: BoundCommandRequest): Promise<RoutingDispatchResult> {
+  private async routeBoundCommand(
+    command: BoundCommandRequest
+  ): Promise<RoutingDispatchResult> {
     const binding = this.chatGate.getBinding(command.envelope.chatId);
     if (!binding.sessionId) {
-      return rejectMissingBinding(command.envelope.chatId, `/${command.command} requires a bound session.`, command.command);
+      return rejectMissingBinding(
+        command.envelope.chatId,
+        `/${command.command} requires a bound session.`,
+        command.command
+      );
     }
 
     const actor = this.actors.get(binding.sessionId);
     if (!actor) {
-      return rejectMissingSession(command.envelope.chatId, binding.sessionId, command.command);
+      return rejectMissingSession(
+        command.envelope.chatId,
+        binding.sessionId,
+        command.command
+      );
     }
 
-    if (actor.isActiveForCommandGate() && !ACTIVE_SESSION_ALLOWED_COMMANDS.has(command.command)) {
-      return rejectActiveBoundCommand(command.envelope.chatId, binding.sessionId, command.command);
+    if (
+      actor.isActiveForCommandGate() &&
+      !ACTIVE_SESSION_ALLOWED_COMMANDS.has(command.command)
+    ) {
+      return rejectActiveBoundCommand(
+        command.envelope.chatId,
+        binding.sessionId,
+        command.command
+      );
     }
 
     const dispatchResult = await actor.enqueue({
@@ -196,12 +234,20 @@ export class InMemoryRoutingCore {
   ): Promise<RoutingDispatchResult> {
     const binding = this.chatGate.getBinding(command.envelope.chatId);
     if (!binding.sessionId) {
-      return rejectMissingBinding(command.envelope.chatId, "/stop requires a bound session.", command.command);
+      return rejectMissingBinding(
+        command.envelope.chatId,
+        "/stop requires a bound session.",
+        command.command
+      );
     }
 
     const actor = this.actors.get(binding.sessionId);
     if (!actor) {
-      return rejectMissingSession(command.envelope.chatId, binding.sessionId, command.command);
+      return rejectMissingSession(
+        command.envelope.chatId,
+        binding.sessionId,
+        command.command
+      );
     }
 
     const cancelEvent: CancelRequestedEvent = {
@@ -213,7 +259,10 @@ export class InMemoryRoutingCore {
   }
 
   private async routeApprovalDecision(
-    decision: Extract<NormalizedInboundMessage, { readonly type: "approval_decision" }>
+    decision: Extract<
+      NormalizedInboundMessage,
+      { readonly type: "approval_decision" }
+    >
   ): Promise<RoutingDispatchResult> {
     const actor = this.actors.get(decision.sessionId);
     if (!actor) {
@@ -242,10 +291,16 @@ export class InMemoryRoutingCore {
     };
     const dispatchResult = await actor.enqueue(approvalEvent);
 
-    return mergeResults(this.chatGate.getBinding(decision.envelope.chatId), dispatchResult);
+    return mergeResults(
+      this.chatGate.getBinding(decision.envelope.chatId),
+      dispatchResult
+    );
   }
 
-  private ensureActor(sessionId: string, snapshot?: SessionActorSnapshot): SessionActor {
+  private ensureActor(
+    sessionId: string,
+    snapshot?: SessionActorSnapshot
+  ): SessionActor {
     let actor = this.actors.get(sessionId);
     if (!actor) {
       actor = new SessionActor(sessionId, snapshot);
@@ -256,7 +311,9 @@ export class InMemoryRoutingCore {
 
   private resolveBoundActor(chatId: string): SessionActor | null {
     const binding = this.chatGate.getBinding(chatId);
-    return binding.sessionId ? this.actors.get(binding.sessionId) ?? null : null;
+    return binding.sessionId
+      ? (this.actors.get(binding.sessionId) ?? null)
+      : null;
   }
 }
 
@@ -355,10 +412,14 @@ function rejectActiveBoundCommand(
   };
 }
 
-function hasCommandRejection(effects: readonly NormalizedOutboundMessage[]): boolean {
+function hasCommandRejection(
+  effects: readonly NormalizedOutboundMessage[]
+): boolean {
   return effects.some(isCommandRejectedEffect);
 }
 
-function isCommandRejectedEffect(effect: NormalizedOutboundMessage): effect is CommandRejectedEffect {
+function isCommandRejectedEffect(
+  effect: NormalizedOutboundMessage
+): effect is CommandRejectedEffect {
   return effect.type === "command_rejected";
 }

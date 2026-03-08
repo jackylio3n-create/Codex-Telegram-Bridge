@@ -1,4 +1,8 @@
-import { runDoctor, type DoctorCheck, type DoctorReport, type DoctorCheckStatus } from "../doctor/index.js";
+import {
+  runDoctor,
+  type DoctorCheckStatus,
+  type DoctorReport
+} from "../doctor/index.js";
 
 export async function runDoctorCommand(): Promise<number> {
   const report = await runDoctor();
@@ -14,7 +18,9 @@ export function renderDoctorReport(report: DoctorReport): string {
   lines.push("");
 
   for (const check of report.checks) {
-    lines.push(`${renderStatus(check.status)} ${check.label}: ${check.summary}`);
+    lines.push(
+      `${renderStatus(check.status)} ${check.label}: ${check.summary}`
+    );
     for (const detail of check.details) {
       lines.push(`  - ${detail}`);
     }

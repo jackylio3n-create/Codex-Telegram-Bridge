@@ -12,14 +12,15 @@ export function buildPersistedSessionActorSnapshot(
   const currentRunId = isSessionStateActiveForCommandGate(session.runState)
     ? session.activeRunId
     : null;
-  const waitingPermissionId = session.runState === "waiting_approval" && currentRunId
-    ? store.pendingPermissions.list({
-        sessionId: session.sessionId,
-        runId: currentRunId,
-        resolved: false,
-        limit: 1
-      })[0]?.permissionId ?? null
-    : null;
+  const waitingPermissionId =
+    session.runState === "waiting_approval" && currentRunId
+      ? (store.pendingPermissions.list({
+          sessionId: session.sessionId,
+          runId: currentRunId,
+          resolved: false,
+          limit: 1
+        })[0]?.permissionId ?? null)
+      : null;
 
   return {
     sessionId: session.sessionId,
@@ -33,7 +34,9 @@ export function buildPersistedSessionActorSnapshot(
   };
 }
 
-export function toWorkspaceSessionState(session: SessionRecord): WorkspaceSessionState {
+export function toWorkspaceSessionState(
+  session: SessionRecord
+): WorkspaceSessionState {
   return {
     workspaceRoot: session.workspaceRoot,
     extraAllowedDirs: session.extraAllowedDirs,

@@ -7,7 +7,7 @@ import type {
   TelegramDocument,
   TelegramDownloadedMedia,
   TelegramMediaDescriptor,
-  TelegramMessage,
+  TelegramMessage
 } from "./types.js";
 
 export interface TelegramMediaDownloadOptions {
@@ -29,7 +29,9 @@ export async function downloadTelegramImageToTemp(
 
   const telegramFile = await client.getFile(descriptor.telegramFileId);
   if (!telegramFile.file_path) {
-    throw new Error(`Telegram file path is missing for ${descriptor.telegramFileId}.`);
+    throw new Error(
+      `Telegram file path is missing for ${descriptor.telegramFileId}.`
+    );
   }
 
   const fileSize = telegramFile.file_size ?? 0;
@@ -39,8 +41,14 @@ export async function downloadTelegramImageToTemp(
     );
   }
 
-  const extension = resolveTempExtension(descriptor.mimeType, telegramFile.file_path);
-  const tempFilePath = join(options.tempDirectoryPath, `telegram-media-${randomUUID()}${extension}`);
+  const extension = resolveTempExtension(
+    descriptor.mimeType,
+    telegramFile.file_path
+  );
+  const tempFilePath = join(
+    options.tempDirectoryPath,
+    `telegram-media-${randomUUID()}${extension}`
+  );
   const fileContents = await client.downloadFile(telegramFile.file_path);
   await writeFile(tempFilePath, fileContents);
 
@@ -92,7 +100,10 @@ function pickImageDescriptor(
 }
 
 function isImageDocument(document: TelegramDocument): boolean {
-  return typeof document.mime_type === "string" && document.mime_type.startsWith("image/");
+  return (
+    typeof document.mime_type === "string" &&
+    document.mime_type.startsWith("image/")
+  );
 }
 
 function resolveTempExtension(mimeType: string, filePath: string): string {

@@ -17,7 +17,11 @@ test("store-backed diagnostics warn on suspicious offset jumps", async () => {
       previousOffset: 100
     });
 
-    const check = buildOffsetsCheck(harness.store, "telegram:getUpdates", 10_000);
+    const check = buildOffsetsCheck(
+      harness.store,
+      "telegram:getUpdates",
+      10_000
+    );
     assert.equal(check.status, "warning");
     assert.match(check.summary, /Suspicious offset jump/);
   } finally {
@@ -41,7 +45,11 @@ test("store-backed diagnostics flag waiting approval sessions without unresolved
 
     const check = buildRunsCheck(harness.store);
     assert.equal(check.status, "error");
-    assert.ok(check.details.some((detail) => detail.includes("waiting_approval has no unresolved approval")));
+    assert.ok(
+      check.details.some((detail) =>
+        detail.includes("waiting_approval has no unresolved approval")
+      )
+    );
   } finally {
     await harness.dispose();
   }
@@ -51,7 +59,9 @@ async function createStoreHarness(): Promise<{
   readonly store: BridgeStore;
   dispose(): Promise<void>;
 }> {
-  const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-doctor-"));
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-doctor-")
+  );
   const store = await createBridgeStore({
     databaseFilePath: join(tempRoot, "bridge.sqlite3")
   });

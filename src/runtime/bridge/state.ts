@@ -2,7 +2,12 @@ import { mkdirSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type BridgeRuntimeStatus = "starting" | "running" | "stopping" | "stopped" | "error";
+export type BridgeRuntimeStatus =
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "error";
 
 export interface BridgeRuntimeState {
   readonly version: 1;
@@ -28,7 +33,9 @@ export interface BridgeRuntimeState {
   readonly lastEvent: string | null;
 }
 
-export async function readBridgeRuntimeState(filePath: string): Promise<BridgeRuntimeState | null> {
+export async function readBridgeRuntimeState(
+  filePath: string
+): Promise<BridgeRuntimeState | null> {
   try {
     const raw = await readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as Partial<BridgeRuntimeState>;
@@ -42,12 +49,17 @@ export async function readBridgeRuntimeState(filePath: string): Promise<BridgeRu
   }
 }
 
-export async function writeBridgeRuntimeState(filePath: string, state: BridgeRuntimeState): Promise<void> {
+export async function writeBridgeRuntimeState(
+  filePath: string,
+  state: BridgeRuntimeState
+): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-export async function removeBridgeRuntimeState(filePath: string): Promise<boolean> {
+export async function removeBridgeRuntimeState(
+  filePath: string
+): Promise<boolean> {
   try {
     await rm(filePath, { force: false });
     return true;
@@ -69,7 +81,10 @@ export async function readPidFile(filePath: string): Promise<number | null> {
   }
 }
 
-export async function writePidFile(filePath: string, pid: number): Promise<void> {
+export async function writePidFile(
+  filePath: string,
+  pid: number
+): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
   await writeFile(filePath, `${pid}\n`, "utf8");
 }
@@ -92,7 +107,9 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
-function isBridgeRuntimeState(value: Partial<BridgeRuntimeState>): value is BridgeRuntimeState {
+function isBridgeRuntimeState(
+  value: Partial<BridgeRuntimeState>
+): value is BridgeRuntimeState {
   return (
     value.version === 1 &&
     value.phase === "daemon" &&
@@ -103,30 +120,42 @@ function isBridgeRuntimeState(value: Partial<BridgeRuntimeState>): value is Brid
     typeof value.appName === "string" &&
     typeof value.env === "string" &&
     typeof value.logFilePath === "string" &&
-    (value.databaseFilePath === null || typeof value.databaseFilePath === "string") &&
+    (value.databaseFilePath === null ||
+      typeof value.databaseFilePath === "string") &&
     typeof value.activeRunCount === "number" &&
     typeof value.activeSessionCount === "number" &&
     typeof value.boundChatCount === "number" &&
     (value.lastPollAt === null || typeof value.lastPollAt === "string") &&
-    (value.lastSuccessfulPollAt === null || typeof value.lastSuccessfulPollAt === "string") &&
-    (value.lastFailedPollAt === null || typeof value.lastFailedPollAt === "string") &&
+    (value.lastSuccessfulPollAt === null ||
+      typeof value.lastSuccessfulPollAt === "string") &&
+    (value.lastFailedPollAt === null ||
+      typeof value.lastFailedPollAt === "string") &&
     typeof value.consecutivePollFailures === "number" &&
     (value.lastPollError === null || typeof value.lastPollError === "string") &&
-    (value.previousOffset === null || typeof value.previousOffset === "number") &&
+    (value.previousOffset === null ||
+      typeof value.previousOffset === "number") &&
     (value.currentOffset === null || typeof value.currentOffset === "number") &&
     (value.lastEvent === null || typeof value.lastEvent === "string")
   );
 }
 
 function isRuntimeStatus(value: unknown): value is BridgeRuntimeStatus {
-  return value === "starting" || value === "running" || value === "stopping" || value === "stopped" || value === "error";
+  return (
+    value === "starting" ||
+    value === "running" ||
+    value === "stopping" ||
+    value === "stopped" ||
+    value === "error"
+  );
 }
 
-function isProcessNotFoundError(error: unknown): error is NodeJS.ErrnoException {
+function isProcessNotFoundError(
+  error: unknown
+): error is NodeJS.ErrnoException {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ESRCH"
+    typeof error === "object" &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ESRCH"
   );
 }

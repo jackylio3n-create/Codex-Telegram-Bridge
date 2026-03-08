@@ -1,4 +1,8 @@
-import { isProcessRunning, readBridgeRuntimeState, readPidFile } from "../../runtime/bridge/index.js";
+import {
+  isProcessRunning,
+  readBridgeRuntimeState,
+  readPidFile
+} from "../../runtime/bridge/index.js";
 import type { DoctorCheck } from "../types.js";
 
 export async function buildDaemonCheck(
@@ -26,7 +30,11 @@ export async function buildDaemonCheck(
       label: "daemon runtime",
       status: "warning",
       summary: "Runtime state exists but the PID file is missing.",
-      details: [state ? `Last known status: ${state.status}.` : "Runtime state file is unreadable."]
+      details: [
+        state
+          ? `Last known status: ${state.status}.`
+          : "Runtime state file is unreadable."
+      ]
     };
   }
 
@@ -36,7 +44,11 @@ export async function buildDaemonCheck(
       label: "daemon runtime",
       status: "warning",
       summary: `PID ${pid} is not running.`,
-      details: [state ? `Last known status: ${state.status}.` : "Runtime state file is unreadable."]
+      details: [
+        state
+          ? `Last known status: ${state.status}.`
+          : "Runtime state file is unreadable."
+      ]
     };
   }
 

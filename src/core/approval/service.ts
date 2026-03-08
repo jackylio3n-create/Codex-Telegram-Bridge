@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { PromptLanguage } from "../../i18n.js";
 import { selectText } from "../../i18n.js";
-import type { PendingPermissionRecord, PendingPermissionsRepository } from "../../store/types.js";
-import type { SessionActorSnapshot } from "../types/index.js";
+import type {
+  PendingPermissionRecord,
+  PendingPermissionsRepository
+} from "../../store/types.js";
 import type {
   ApprovalDecision,
   ApprovalDecisionInput,
@@ -32,7 +34,8 @@ export class ApprovalService {
   ) {
     this.#pendingPermissions = pendingPermissions;
     this.#clock = options.clock ?? (() => new Date());
-    this.#defaultApprovalTtlMs = options.defaultApprovalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
+    this.#defaultApprovalTtlMs =
+      options.defaultApprovalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
   }
 
   createPendingApproval(
@@ -41,7 +44,9 @@ export class ApprovalService {
   ): ApprovalRequestRecord {
     const createdAt = this.#clock();
     const permissionId = createOpaquePermissionId();
-    const expiresAt = new Date(createdAt.getTime() + (input.ttlMs ?? this.#defaultApprovalTtlMs));
+    const expiresAt = new Date(
+      createdAt.getTime() + (input.ttlMs ?? this.#defaultApprovalTtlMs)
+    );
     const permission = this.#pendingPermissions.create({
       permissionId,
       sessionId: input.sessionId,
@@ -61,11 +66,16 @@ export class ApprovalService {
         approve: formatApprovalCallbackData("approve", permission.permissionId),
         deny: formatApprovalCallbackData("deny", permission.permissionId)
       },
-      replyMarkup: buildApprovalInlineKeyboard(permission.permissionId, language)
+      replyMarkup: buildApprovalInlineKeyboard(
+        permission.permissionId,
+        language
+      )
     };
   }
 
-  listPendingPermissionsForSession(sessionId: string): readonly PendingPermissionRecord[] {
+  listPendingPermissionsForSession(
+    sessionId: string
+  ): readonly PendingPermissionRecord[] {
     return this.#pendingPermissions.list({
       sessionId,
       resolved: false
@@ -83,7 +93,8 @@ export class ApprovalService {
     if (args.length !== 2) {
       return {
         kind: "invalid",
-        message: localize(language,
+        message: localize(
+          language,
           "用法：/perm 或 /perm <approve|deny> <permission_id>。",
           "Usage: /perm or /perm <approve|deny> <permission_id>."
         )
@@ -93,10 +104,14 @@ export class ApprovalService {
     const decisionToken = args[0]?.trim().toLowerCase();
     const permissionId = args[1]?.trim() ?? "";
 
-    if ((decisionToken !== "approve" && decisionToken !== "deny") || permissionId === "") {
+    if (
+      (decisionToken !== "approve" && decisionToken !== "deny") ||
+      permissionId === ""
+    ) {
       return {
         kind: "invalid",
-        message: localize(language,
+        message: localize(
+          language,
           "用法：/perm approve <permission_id> 或 /perm deny <permission_id>。",
           "Usage: /perm approve <permission_id> or /perm deny <permission_id>."
         )
@@ -112,18 +127,25 @@ export class ApprovalService {
     };
   }
 
-  formatPermFallbackText(sessionId: string, language: PromptLanguage = "en"): string {
+  formatPermFallbackText(
+    sessionId: string,
+    language: PromptLanguage = "en"
+  ): string {
     const pending = this.listPendingPermissionsForSession(sessionId);
     if (pending.length === 0) {
-      return localize(language, "当前会话没有待审批项。", "No pending approvals for this session.");
+      return localize(
+        language,
+        "当前会话没有待审批项。",
+        "No pending approvals for this session."
+      );
     }
 
-    const lines = [
-      localize(language, "待审批项：", "Pending approvals:")
-    ];
+    const lines = [localize(language, "待审批项：", "Pending approvals:")];
 
     for (const permission of pending) {
-      lines.push(`- ${permission.permissionId} | ${permission.toolName} | ${permission.summary}`);
+      lines.push(
+        `- ${permission.permissionId} | ${permission.toolName} | ${permission.summary}`
+      );
       lines.push(`  /perm approve ${permission.permissionId}`);
       lines.push(`  /perm deny ${permission.permissionId}`);
     }
@@ -139,48 +161,76 @@ export class ApprovalService {
     if (!permission) {
       return {
         status: "missing",
-        message: localize(language, "已过期或已处理。", "Expired or already handled.")
+        message: localize(
+          language,
+          "已过期或已处理。",
+          "Expired or already handled."
+        )
       };
     }
 
     const now = this.#clock();
     const nowIso = now.toISOString();
-    const staleReason = this.#resolveStaleReason(permission, input, now.getTime());
+    const staleReason = this.#resolveStaleReason(
+      permission,
+      input,
+      now.getTime()
+    );
     if (staleReason) {
       if (staleReason === "expired" && !permission.resolved) {
-        this.#pendingPermissions.resolve(permission.permissionId, "expired", nowIso);
+        this.#pendingPermissions.resolve(
+          permission.permissionId,
+          "expired",
+          nowIso
+        );
       }
 
       return {
         status: "stale",
-        message: localize(language, "已过期或已处理。", "Expired or already handled."),
+        message: localize(
+          language,
+          "已过期或已处理。",
+          "Expired or already handled."
+        ),
         reason: staleReason,
         permission
       };
     }
 
     const resolution = input.decision === "approve" ? "approved" : "denied";
-    const resolved = this.#pendingPermissions.resolve(permission.permissionId, resolution, nowIso);
+    const resolved = this.#pendingPermissions.resolve(
+      permission.permissionId,
+      resolution,
+      nowIso
+    );
 
     if (!resolved) {
       return {
         status: "missing",
-        message: localize(language, "已过期或已处理。", "Expired or already handled.")
+        message: localize(
+          language,
+          "已过期或已处理。",
+          "Expired or already handled."
+        )
       };
     }
 
     return {
       status: input.decision === "approve" ? "approved" : "denied",
-      message: input.decision === "approve"
-        ? localize(language, "已批准。", "Approval granted.")
-        : localize(language, "已拒绝。", "Approval denied."),
+      message:
+        input.decision === "approve"
+          ? localize(language, "已批准。", "Approval granted.")
+          : localize(language, "已拒绝。", "Approval denied."),
       permission: resolved
     };
   }
 
   expirePendingApprovals(now = this.#clock()): ApprovalExpiryResult {
     const nowIso = now.toISOString();
-    const expiredPermissionIds = this.#pendingPermissions.expirePending(nowIso, nowIso);
+    const expiredPermissionIds = this.#pendingPermissions.expirePending(
+      nowIso,
+      nowIso
+    );
 
     return {
       expiredCount: expiredPermissionIds.length,

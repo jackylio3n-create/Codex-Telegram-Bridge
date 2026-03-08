@@ -11,7 +11,9 @@ const DEFAULT_STATUS_TEXT = [
 
 const SESSION_SCAN_LIMIT = 20;
 
-export async function readCodexAccountStatus(codexHome: string): Promise<CodexAccountStatus> {
+export async function readCodexAccountStatus(
+  codexHome: string
+): Promise<CodexAccountStatus> {
   const [config, rateLimits] = await Promise.all([
     readCodexConfig(codexHome),
     readLatestKnownRateLimits(codexHome)
@@ -101,7 +103,9 @@ async function readLatestKnownRateLimits(codexHome: string): Promise<{
   readonly secondary: CodexRateLimitWindow | null;
   readonly timestamp: string | null;
 } | null> {
-  const sessionFiles = await listRecentSessionFiles(join(codexHome, "sessions"));
+  const sessionFiles = await listRecentSessionFiles(
+    join(codexHome, "sessions")
+  );
   for (const filePath of sessionFiles) {
     const rateLimits = await readRateLimitsFromSessionFile(filePath);
     if (rateLimits) {
@@ -112,7 +116,9 @@ async function readLatestKnownRateLimits(codexHome: string): Promise<{
   return null;
 }
 
-async function listRecentSessionFiles(sessionsRoot: string): Promise<readonly string[]> {
+async function listRecentSessionFiles(
+  sessionsRoot: string
+): Promise<readonly string[]> {
   try {
     const filePaths = await walkSessionFiles(sessionsRoot);
     return filePaths
@@ -131,7 +137,7 @@ async function walkSessionFiles(root: string): Promise<string[]> {
   for (const entry of entries) {
     const absolutePath = join(root, entry.name);
     if (entry.isDirectory()) {
-      filePaths.push(...await walkSessionFiles(absolutePath));
+      filePaths.push(...(await walkSessionFiles(absolutePath)));
       continue;
     }
 
@@ -153,7 +159,7 @@ async function readRateLimitsFromSessionFile(filePath: string): Promise<{
 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]?.trim();
-    if (!line || !line.includes("\"rate_limits\"")) {
+    if (!line || !line.includes('"rate_limits"')) {
       continue;
     }
 
@@ -168,7 +174,8 @@ async function readRateLimitsFromSessionFile(filePath: string): Promise<{
       return {
         primary: readRateLimitWindow(rateLimits.primary),
         secondary: readRateLimitWindow(rateLimits.secondary),
-        timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : null
+        timestamp:
+          typeof parsed.timestamp === "string" ? parsed.timestamp : null
       };
     } catch {
       continue;
@@ -179,7 +186,9 @@ async function readRateLimitsFromSessionFile(filePath: string): Promise<{
 }
 
 function readTomlString(raw: string, key: string): string | null {
-  const match = raw.match(new RegExp(`^\\s*${escapeRegularExpression(key)}\\s*=\\s*\"([^\"]*)\"`, "m"));
+  const match = raw.match(
+    new RegExp(`^\\s*${escapeRegularExpression(key)}\\s*=\\s*"([^"]*)"`, "m")
+  );
   return match?.[1] ?? null;
 }
 
@@ -191,12 +200,15 @@ function readRateLimitWindow(value: unknown): CodexRateLimitWindow | null {
 
   return {
     usedPercent: record.used_percent,
-    windowMinutes: typeof record.window_minutes === "number" ? record.window_minutes : null,
+    windowMinutes:
+      typeof record.window_minutes === "number" ? record.window_minutes : null,
     resetsAt: typeof record.resets_at === "number" ? record.resets_at : null
   };
 }
 
-function toRemainingPercent(window: CodexRateLimitWindow | null): number | null {
+function toRemainingPercent(
+  window: CodexRateLimitWindow | null
+): number | null {
   if (!window) {
     return null;
   }
@@ -210,7 +222,9 @@ function formatRemainingPercent(value: number | null): string {
   }
 
   const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? `${rounded.toFixed(0)}%` : `${rounded.toFixed(1)}%`;
+  return Number.isInteger(rounded)
+    ? `${rounded.toFixed(0)}%`
+    : `${rounded.toFixed(1)}%`;
 }
 
 function clampPercent(value: number): number {
@@ -218,7 +232,9 @@ function clampPercent(value: number): number {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function escapeRegularExpression(value: string): string {

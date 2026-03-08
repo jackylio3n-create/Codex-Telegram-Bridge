@@ -29,6 +29,10 @@ export async function buildCodexCheck(): Promise<DoctorCheck> {
     label: "codex runtime",
     status: "ok",
     summary: "Codex CLI is available and logged in.",
-    details: [status.provider ? `Provider: ${status.provider}.` : "Provider was not reported by the CLI."]
+    details: [
+      status.provider
+        ? `Provider: ${status.provider}.`
+        : "Provider was not reported by the CLI."
+    ]
   };
 }

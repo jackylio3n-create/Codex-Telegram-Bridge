@@ -1,6 +1,13 @@
-export { TelegramBotClient, type TelegramBotClientOptions, type TelegramFetch } from "./client.js";
+export {
+  TelegramBotClient,
+  type TelegramBotClientOptions,
+  type TelegramFetch
+} from "./client.js";
 export { chunkTelegramText, createTelegramPreviewText } from "./chunking.js";
-export { downloadTelegramImageToTemp, type TelegramMediaDownloadOptions } from "./media.js";
+export {
+  downloadTelegramImageToTemp,
+  type TelegramMediaDownloadOptions
+} from "./media.js";
 export {
   TelegramPollingService,
   type TelegramPollingServiceOptions

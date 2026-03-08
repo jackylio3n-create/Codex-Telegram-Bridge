@@ -8,7 +8,8 @@ const KEY_LENGTH = 32;
 const SALT_BYTES = 16;
 const HASH_PART_COUNT = 7;
 
-export const SETUP_VERIFICATION_PASSWORD_ENV_VAR = "CODEX_TELEGRAM_BRIDGE_SETUP_VERIFICATION_PASSWORD";
+export const SETUP_VERIFICATION_PASSWORD_ENV_VAR =
+  "CODEX_TELEGRAM_BRIDGE_SETUP_VERIFICATION_PASSWORD";
 
 export function hashVerificationPassword(password: string): string {
   const normalizedPassword = normalizeVerificationPassword(password);
@@ -26,14 +27,24 @@ export function hashVerificationPassword(password: string): string {
   ].join("$");
 }
 
-export function verifyVerificationPassword(password: string, encodedHash: string): boolean {
+export function verifyVerificationPassword(
+  password: string,
+  encodedHash: string
+): boolean {
   const parsed = parseVerificationPasswordHash(encodedHash);
   if (!parsed) {
     return false;
   }
 
-  const actual = deriveKey(normalizeVerificationPassword(password), parsed.salt, parsed.options);
-  return actual.length === parsed.derivedKey.length && timingSafeEqual(actual, parsed.derivedKey);
+  const actual = deriveKey(
+    normalizeVerificationPassword(password),
+    parsed.salt,
+    parsed.options
+  );
+  return (
+    actual.length === parsed.derivedKey.length &&
+    timingSafeEqual(actual, parsed.derivedKey)
+  );
 }
 
 export function isVerificationPasswordHash(value: string): boolean {
@@ -76,7 +87,15 @@ function parseVerificationPasswordHash(encodedHash: string): {
     return null;
   }
 
-  const [algorithm, costText, blockSizeText, parallelizationText, keyLengthText, saltHex, derivedHex] = parts;
+  const [
+    algorithm,
+    costText,
+    blockSizeText,
+    parallelizationText,
+    keyLengthText,
+    saltHex,
+    derivedHex
+  ] = parts;
   if (algorithm !== HASH_ALGORITHM) {
     return null;
   }
@@ -121,5 +140,9 @@ function parsePositiveInteger(value: string | undefined): number | null {
 }
 
 function isHex(value: string | undefined): value is string {
-  return typeof value === "string" && value.length % 2 === 0 && /^[0-9a-f]+$/i.test(value);
+  return (
+    typeof value === "string" &&
+    value.length % 2 === 0 &&
+    /^[0-9a-f]+$/i.test(value)
+  );
 }

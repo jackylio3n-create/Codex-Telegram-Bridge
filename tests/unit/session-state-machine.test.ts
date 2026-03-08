@@ -21,10 +21,10 @@ test("state machine completes a full run lifecycle including approval", () => {
   assert.equal(started.snapshot.runState, "running");
   assert.equal(started.snapshot.currentRunId, "run-1");
   assert.equal(started.snapshot.lastEventAt, startedAt);
-  assert.deepEqual(started.effects.map((effect) => effect.type), [
-    "session_event_queued",
-    "session_state_changed"
-  ]);
+  assert.deepEqual(
+    started.effects.map((effect) => effect.type),
+    ["session_event_queued", "session_state_changed"]
+  );
 
   const waiting = reduceSessionEvent(started.snapshot, {
     kind: "approval_requested",
@@ -88,10 +88,10 @@ test("state machine rejects stale approval decisions by permission id", () => {
   assert.equal(rejected.accepted, false);
   assert.equal(rejected.snapshot.runState, "waiting_approval");
   assert.equal(rejected.snapshot.waitingPermissionId, "perm-current");
-  assert.deepEqual(rejected.effects.map((effect) => effect.type), [
-    "session_event_queued",
-    "session_event_rejected"
-  ]);
+  assert.deepEqual(
+    rejected.effects.map((effect) => effect.type),
+    ["session_event_queued", "session_event_rejected"]
+  );
 
   const rejection = rejected.effects[1];
   assert.equal(rejection?.type, "session_event_rejected");

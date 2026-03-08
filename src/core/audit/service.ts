@@ -22,16 +22,25 @@ export class AuditService {
   readonly #auditLogs: AuditLogsRepository;
   readonly #clock: () => Date;
 
-  constructor(auditLogs: AuditLogsRepository, options: AuditServiceOptions = {}) {
+  constructor(
+    auditLogs: AuditLogsRepository,
+    options: AuditServiceOptions = {}
+  ) {
     this.#auditLogs = auditLogs;
     this.#clock = options.clock ?? (() => new Date());
   }
 
-  recordUserInput(context: AuditActorContext, payload: UserInputAuditPayload): AuditLogRecord<UserInputAuditPayload> {
+  recordUserInput(
+    context: AuditActorContext,
+    payload: UserInputAuditPayload
+  ): AuditLogRecord<UserInputAuditPayload> {
     return this.#append("user_input", context, payload);
   }
 
-  recordUserCommand(context: AuditActorContext, payload: UserCommandAuditPayload): AuditLogRecord<UserCommandAuditPayload> {
+  recordUserCommand(
+    context: AuditActorContext,
+    payload: UserCommandAuditPayload
+  ): AuditLogRecord<UserCommandAuditPayload> {
     return this.#append("user_command", context, payload);
   }
 
@@ -42,23 +51,38 @@ export class AuditService {
     return this.#append("approval_decision", context, payload);
   }
 
-  recordAgentText(context: AuditActorContext, payload: AgentTextAuditPayload): AuditLogRecord<AgentTextAuditPayload> {
+  recordAgentText(
+    context: AuditActorContext,
+    payload: AgentTextAuditPayload
+  ): AuditLogRecord<AgentTextAuditPayload> {
     return this.#append("agent_text", context, payload);
   }
 
-  recordToolStart(context: AuditActorContext, payload: ToolStartAuditPayload): AuditLogRecord<ToolStartAuditPayload> {
+  recordToolStart(
+    context: AuditActorContext,
+    payload: ToolStartAuditPayload
+  ): AuditLogRecord<ToolStartAuditPayload> {
     return this.#append("tool_start", context, payload);
   }
 
-  recordToolResult(context: AuditActorContext, payload: ToolResultAuditPayload): AuditLogRecord<ToolResultAuditPayload> {
+  recordToolResult(
+    context: AuditActorContext,
+    payload: ToolResultAuditPayload
+  ): AuditLogRecord<ToolResultAuditPayload> {
     return this.#append("tool_result", context, payload);
   }
 
-  recordFileChange(context: AuditActorContext, payload: FileChangeAuditPayload): AuditLogRecord<FileChangeAuditPayload> {
+  recordFileChange(
+    context: AuditActorContext,
+    payload: FileChangeAuditPayload
+  ): AuditLogRecord<FileChangeAuditPayload> {
     return this.#append("file_change", context, payload);
   }
 
-  recordShellExec(context: AuditActorContext, payload: ShellExecAuditPayload): AuditLogRecord<ShellExecAuditPayload> {
+  recordShellExec(
+    context: AuditActorContext,
+    payload: ShellExecAuditPayload
+  ): AuditLogRecord<ShellExecAuditPayload> {
     return this.#append("shell_exec", context, payload);
   }
 
@@ -69,7 +93,10 @@ export class AuditService {
     return this.#append("session_rebind", context, payload);
   }
 
-  recordRunCancel(context: AuditActorContext, payload: RunCancelAuditPayload): AuditLogRecord<RunCancelAuditPayload> {
+  recordRunCancel(
+    context: AuditActorContext,
+    payload: RunCancelAuditPayload
+  ): AuditLogRecord<RunCancelAuditPayload> {
     return this.#append("run_cancel", context, payload);
   }
 
@@ -80,14 +107,21 @@ export class AuditService {
     return this.#append("resume_recovery", context, payload);
   }
 
-  listRecentSessionEvents(sessionId: string, limit = 20): readonly AuditLogRecord[] {
+  listRecentSessionEvents(
+    sessionId: string,
+    limit = 20
+  ): readonly AuditLogRecord[] {
     return this.#auditLogs.list({
       sessionId,
       limit
     });
   }
 
-  #append<TPayload>(eventType: string, context: AuditActorContext, payload: TPayload): AuditLogRecord<TPayload> {
+  #append<TPayload>(
+    eventType: string,
+    context: AuditActorContext,
+    payload: TPayload
+  ): AuditLogRecord<TPayload> {
     return this.#auditLogs.append({
       sessionId: context.sessionId ?? null,
       chatId: context.chatId ?? null,

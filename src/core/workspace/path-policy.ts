@@ -117,7 +117,9 @@ export function isContainerAbsolutePath(targetPath: string): boolean {
   return pathPosix.isAbsolute(targetPath);
 }
 
-export function dedupeContainerPaths(paths: readonly string[]): readonly string[] {
+export function dedupeContainerPaths(
+  paths: readonly string[]
+): readonly string[] {
   const seen = new Set<string>();
   const output: string[] = [];
 
@@ -135,13 +137,21 @@ export function dedupeContainerPaths(paths: readonly string[]): readonly string[
 }
 
 export function buildAllowedDirectorySet(
-  session: Pick<WorkspaceSessionState, "workspaceRoot" | "extraAllowedDirs"> & Partial<Pick<WorkspaceSessionState, "accessScope">>
+  session: Pick<WorkspaceSessionState, "workspaceRoot" | "extraAllowedDirs"> &
+    Partial<Pick<WorkspaceSessionState, "accessScope">>
 ): readonly string[] {
   const scopeRoots = session.accessScope === "system" ? ["/"] : [];
-  return dedupeContainerPaths([session.workspaceRoot, ...session.extraAllowedDirs, ...scopeRoots]);
+  return dedupeContainerPaths([
+    session.workspaceRoot,
+    ...session.extraAllowedDirs,
+    ...scopeRoots
+  ]);
 }
 
-export function isPathInsideBase(targetPath: string, basePath: string): boolean {
+export function isPathInsideBase(
+  targetPath: string,
+  basePath: string
+): boolean {
   const normalizedTarget = normalizeContainerPath(targetPath);
   const normalizedBase = normalizeContainerPath(basePath);
 
@@ -149,11 +159,19 @@ export function isPathInsideBase(targetPath: string, basePath: string): boolean 
     return normalizedTarget.startsWith("/");
   }
 
-  return normalizedTarget === normalizedBase || normalizedTarget.startsWith(`${normalizedBase}/`);
+  return (
+    normalizedTarget === normalizedBase ||
+    normalizedTarget.startsWith(`${normalizedBase}/`)
+  );
 }
 
-export function isPathInsideAllowedSet(targetPath: string, allowedPaths: readonly string[]): boolean {
-  return allowedPaths.some((allowedPath) => isPathInsideBase(targetPath, allowedPath));
+export function isPathInsideAllowedSet(
+  targetPath: string,
+  allowedPaths: readonly string[]
+): boolean {
+  return allowedPaths.some((allowedPath) =>
+    isPathInsideBase(targetPath, allowedPath)
+  );
 }
 
 export async function validateWorkspaceSession(
@@ -161,9 +179,20 @@ export async function validateWorkspaceSession(
   options: WorkspaceValidationOptions = {}
 ): Promise<WorkspaceValidationResult> {
   const issues: WorkspaceIssue[] = [];
-  const workspaceRoot = validateDeclaredPath(session.workspaceRoot, "workspaceRoot", issues);
-  const extraAllowedDirs = validateDeclaredDirectories(session.extraAllowedDirs, "extraAllowedDirs", issues);
-  const normalizedAllowedDirs = dedupeContainerPaths([workspaceRoot, ...extraAllowedDirs]);
+  const workspaceRoot = validateDeclaredPath(
+    session.workspaceRoot,
+    "workspaceRoot",
+    issues
+  );
+  const extraAllowedDirs = validateDeclaredDirectories(
+    session.extraAllowedDirs,
+    "extraAllowedDirs",
+    issues
+  );
+  const normalizedAllowedDirs = dedupeContainerPaths([
+    workspaceRoot,
+    ...extraAllowedDirs
+  ]);
   const cwd = validateDeclaredPath(session.cwd, "cwd", issues);
 
   const normalizedSession: WorkspaceSessionState = {
@@ -182,17 +211,24 @@ export async function validateWorkspaceSession(
     });
   }
 
-  validateVisibleRoots(normalizedSession, normalizedAllowedDirs, options.visiblePolicy, issues);
+  validateVisibleRoots(
+    normalizedSession,
+    normalizedAllowedDirs,
+    options.visiblePolicy,
+    issues
+  );
 
   if (options.inspector) {
     const requireExisting = options.requireExistingPaths ?? true;
-    issues.push(...await validateFilesystemState(
-      normalizedSession,
-      normalizedAllowedDirs,
-      options.visiblePolicy,
-      options.inspector,
-      requireExisting
-    ));
+    issues.push(
+      ...(await validateFilesystemState(
+        normalizedSession,
+        normalizedAllowedDirs,
+        options.visiblePolicy,
+        options.inspector,
+        requireExisting
+      ))
+    );
   }
 
   return {
@@ -233,7 +269,11 @@ function validateDeclaredDirectories(
   return normalizedDirectories;
 }
 
-function validateDeclaredPath(rawPath: string, field: string, issues: WorkspaceIssue[]): string {
+function validateDeclaredPath(
+  rawPath: string,
+  field: string,
+  issues: WorkspaceIssue[]
+): string {
   const trimmed = rawPath.trim();
   if (trimmed === "") {
     issues.push({
@@ -275,15 +315,22 @@ function validateVisibleRoots(
     return;
   }
 
-  const normalizedMountedRoots = dedupeContainerPaths(visiblePolicy.mountedRoots);
+  const normalizedMountedRoots = dedupeContainerPaths(
+    visiblePolicy.mountedRoots
+  );
   const entries: Array<readonly [string, string]> = [
     ["workspaceRoot", session.workspaceRoot],
     ["cwd", session.cwd],
-    ...session.extraAllowedDirs.map((path, index) => [`extraAllowedDirs[${index}]`, path] as const)
+    ...session.extraAllowedDirs.map(
+      (path, index) => [`extraAllowedDirs[${index}]`, path] as const
+    )
   ];
 
   for (const [field, targetPath] of entries) {
-    if (targetPath !== "" && !isPathInsideAllowedSet(targetPath, normalizedMountedRoots)) {
+    if (
+      targetPath !== "" &&
+      !isPathInsideAllowedSet(targetPath, normalizedMountedRoots)
+    ) {
       issues.push({
         code: "path_not_visible",
         field,
@@ -311,31 +358,35 @@ async function validateFilesystemState(
   requireExistingPaths: boolean
 ): Promise<readonly WorkspaceIssue[]> {
   const mountedRoots = visiblePolicy?.mountedRoots ?? [];
-  const normalizedMountedRoots = mountedRoots.length > 0
-    ? dedupeContainerPaths(mountedRoots)
-    : [];
-  const inspections = await inspectPaths([
-    ...normalizedAllowedDirs,
-    ...normalizedMountedRoots,
-    session.workspaceRoot,
-    session.cwd,
-    ...session.extraAllowedDirs
-  ], inspector);
+  const normalizedMountedRoots =
+    mountedRoots.length > 0 ? dedupeContainerPaths(mountedRoots) : [];
+  const inspections = await inspectPaths(
+    [
+      ...normalizedAllowedDirs,
+      ...normalizedMountedRoots,
+      session.workspaceRoot,
+      session.cwd,
+      ...session.extraAllowedDirs
+    ],
+    inspector
+  );
   const declaredAllowedRoots = buildResolvedRoots(
     normalizedAllowedDirs,
     "allowedDirs",
     inspections,
     requireExistingPaths
   );
-  const declaredVisibleRoots = normalizedMountedRoots.length > 0
-    ? buildResolvedRoots(
-        normalizedMountedRoots,
-        "mountedRoots",
-        inspections,
-        requireExistingPaths
-      )
-    : null;
-  const visibleRoots = declaredVisibleRoots?.roots ?? declaredAllowedRoots.roots;
+  const declaredVisibleRoots =
+    normalizedMountedRoots.length > 0
+      ? buildResolvedRoots(
+          normalizedMountedRoots,
+          "mountedRoots",
+          inspections,
+          requireExistingPaths
+        )
+      : null;
+  const visibleRoots =
+    declaredVisibleRoots?.roots ?? declaredAllowedRoots.roots;
   const pathChecks = [
     assertPathState(
       session.workspaceRoot,
@@ -417,7 +468,10 @@ function assertPathState(
     return inspection.issues;
   }
 
-  if (resolvedAllowedDirs.length === 0 || isPathInsideAllowedSet(inspection.resolvedPath, resolvedAllowedDirs)) {
+  if (
+    resolvedAllowedDirs.length === 0 ||
+    isPathInsideAllowedSet(inspection.resolvedPath, resolvedAllowedDirs)
+  ) {
     return inspection.issues;
   }
 
@@ -468,7 +522,9 @@ function resolveWithInspection(
 
   const resolved = state.resolvedPath;
   if (!resolved) {
-    throw new Error(`Missing resolved path for inspected directory: ${targetPath}`);
+    throw new Error(
+      `Missing resolved path for inspected directory: ${targetPath}`
+    );
   }
 
   if (state.isSymbolicLink && !isPathInsideBase(resolved, targetPath)) {
@@ -546,8 +602,8 @@ function getInspectedPath(
 function isNotFoundError(error: unknown): error is NodeJS.ErrnoException {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
+    typeof error === "object" &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
   );
 }

@@ -41,17 +41,21 @@ export function parseEnvironmentFile(raw: string): NodeJS.ProcessEnv {
   return env;
 }
 
-export function serializeEnvironmentFile(entries: readonly [string, string][]): string {
+export function serializeEnvironmentFile(
+  entries: readonly [string, string][]
+): string {
   return entries
     .map(([key, value]) => `${key}=${quoteEnvironmentValue(value)}`)
     .join("\n")
     .concat("\n");
 }
 
-export function getDefaultEnvFileSearchPaths(options: {
-  readonly cwd?: string;
-  readonly homeDir?: string;
-} = {}): readonly string[] {
+export function getDefaultEnvFileSearchPaths(
+  options: {
+    readonly cwd?: string;
+    readonly homeDir?: string;
+  } = {}
+): readonly string[] {
   const currentWorkingDirectory = resolve(options.cwd ?? process.cwd());
   const resolvedHomeDir = resolve(options.homeDir ?? homedir());
 
@@ -62,7 +66,9 @@ export function getDefaultEnvFileSearchPaths(options: {
   ];
 }
 
-export async function readEnvironmentFile(filePath: string): Promise<NodeJS.ProcessEnv> {
+export async function readEnvironmentFile(
+  filePath: string
+): Promise<NodeJS.ProcessEnv> {
   const raw = await readFile(filePath, "utf8");
   return parseEnvironmentFile(raw);
 }
@@ -122,17 +128,17 @@ async function pathExists(filePath: string): Promise<boolean> {
 
 function parseEnvironmentValue(rawValue: string): string {
   if (
-    (rawValue.startsWith("\"") && rawValue.endsWith("\""))
-    || (rawValue.startsWith("'") && rawValue.endsWith("'"))
+    (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+    (rawValue.startsWith("'") && rawValue.endsWith("'"))
   ) {
     const inner = rawValue.slice(1, -1);
-    return rawValue.startsWith("\"")
+    return rawValue.startsWith('"')
       ? inner
-        .replace(/\\n/g, "\n")
-        .replace(/\\r/g, "\r")
-        .replace(/\\t/g, "\t")
-        .replace(/\\"/g, "\"")
-        .replace(/\\\\/g, "\\")
+          .replace(/\\n/g, "\n")
+          .replace(/\\r/g, "\r")
+          .replace(/\\t/g, "\t")
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, "\\")
       : inner.replace(/\\'/g, "'");
   }
 
@@ -141,7 +147,7 @@ function parseEnvironmentValue(rawValue: string): string {
 
 function quoteEnvironmentValue(value: string): string {
   if (value === "") {
-    return "\"\"";
+    return '""';
   }
 
   if (/^[A-Za-z0-9_./:-]+$/.test(value)) {
@@ -153,5 +159,5 @@ function quoteEnvironmentValue(value: string): string {
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
     .replace(/\t/g, "\\t")
-    .replace(/"/g, "\\\"")}"`;
+    .replace(/"/g, '\\"')}"`;
 }

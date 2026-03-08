@@ -27,16 +27,26 @@ import type {
   SessionUpsertInput
 } from "../../src/store/types.js";
 
-function createStore(seed: {
-  readonly sessions?: readonly SessionRecord[];
-  readonly pendingPermissions?: readonly PendingPermissionRecord[];
-  readonly channelOffsets?: readonly ChannelOffsetRecord[];
-} = {}): BridgeStore {
-  const sessions = new Map((seed.sessions ?? []).map((record) => [record.sessionId, record] as const));
-  const pendingPermissions = new Map(
-    (seed.pendingPermissions ?? []).map((record) => [record.permissionId, record] as const)
+function createStore(
+  seed: {
+    readonly sessions?: readonly SessionRecord[];
+    readonly pendingPermissions?: readonly PendingPermissionRecord[];
+    readonly channelOffsets?: readonly ChannelOffsetRecord[];
+  } = {}
+): BridgeStore {
+  const sessions = new Map(
+    (seed.sessions ?? []).map((record) => [record.sessionId, record] as const)
   );
-  const offsets = new Map((seed.channelOffsets ?? []).map((record) => [record.channelKey, record] as const));
+  const pendingPermissions = new Map(
+    (seed.pendingPermissions ?? []).map(
+      (record) => [record.permissionId, record] as const
+    )
+  );
+  const offsets = new Map(
+    (seed.channelOffsets ?? []).map(
+      (record) => [record.channelKey, record] as const
+    )
+  );
 
   return {
     databaseFilePath: ":memory:",
@@ -123,11 +133,13 @@ function createStore(seed: {
       list(filter: PendingPermissionFilter = {}) {
         return [...pendingPermissions.values()].filter((record) => {
           return (
-            (filter.sessionId === undefined || record.sessionId === filter.sessionId) &&
+            (filter.sessionId === undefined ||
+              record.sessionId === filter.sessionId) &&
             (filter.runId === undefined || record.runId === filter.runId) &&
             (filter.chatId === undefined || record.chatId === filter.chatId) &&
             (filter.userId === undefined || record.userId === filter.userId) &&
-            (filter.resolved === undefined || record.resolved === filter.resolved)
+            (filter.resolved === undefined ||
+              record.resolved === filter.resolved)
           );
         });
       },
@@ -154,7 +166,10 @@ function createStore(seed: {
         const expiredPermissionIds: string[] = [];
 
         for (const [permissionId, record] of pendingPermissions.entries()) {
-          if (record.resolved || Date.parse(record.expiresAt) >= Date.parse(before)) {
+          if (
+            record.resolved ||
+            Date.parse(record.expiresAt) >= Date.parse(before)
+          ) {
             continue;
           }
 
@@ -169,7 +184,11 @@ function createStore(seed: {
 
         return expiredPermissionIds;
       },
-      resolve(permissionId: string, resolution: PendingPermissionResolution, resolvedAt?: string) {
+      resolve(
+        permissionId: string,
+        resolution: PendingPermissionResolution,
+        resolvedAt?: string
+      ) {
         const existing = pendingPermissions.get(permissionId);
         if (!existing) {
           return null;
@@ -224,7 +243,10 @@ function createStore(seed: {
       list(_filter?: AuditLogFilter) {
         return [] as readonly AuditLogRecord[];
       },
-      listRecentByEventType(_sessionId: string, _limits: readonly AuditLogEventLimit[]) {
+      listRecentByEventType(
+        _sessionId: string,
+        _limits: readonly AuditLogEventLimit[]
+      ) {
         return [] as readonly AuditLogRecord[];
       },
       pruneOlderThan() {
@@ -350,7 +372,9 @@ test("buildRunsCheck errors when waiting_approval has no unresolved permission f
   );
 
   assert.equal(check.status, "error");
-  assert.ok(check.details.some((detail) => detail.includes("no unresolved approval")));
+  assert.ok(
+    check.details.some((detail) => detail.includes("no unresolved approval"))
+  );
 });
 
 test("buildRunsCheck warns when terminal state keeps an active run id", () => {
@@ -378,7 +402,11 @@ test("buildRunsCheck warns when terminal state keeps an active run id", () => {
   );
 
   assert.equal(check.status, "warning");
-  assert.ok(check.details.some((detail) => detail.includes("terminal run_state=cancelled")));
+  assert.ok(
+    check.details.some((detail) =>
+      detail.includes("terminal run_state=cancelled")
+    )
+  );
 });
 
 test("buildRunsCheck reads unresolved approvals once and reuses them across sessions", () => {
@@ -461,5 +489,9 @@ test("buildRunsCheck reads unresolved approvals once and reuses them across sess
 
   assert.equal(check.status, "warning");
   assert.equal(listCalls, 1);
-  assert.ok(check.details.some((detail) => detail.includes("running still has 1 unresolved approval")));
+  assert.ok(
+    check.details.some((detail) =>
+      detail.includes("running still has 1 unresolved approval")
+    )
+  );
 });

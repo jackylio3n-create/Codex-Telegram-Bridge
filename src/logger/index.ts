@@ -9,7 +9,9 @@ const LOG_LEVEL_RANK: Record<(typeof LOG_LEVEL_ORDER)[number], number> = {
   warn: 2,
   error: 3
 };
-const LOG_LEVEL_SET = new Set<(typeof LOG_LEVEL_ORDER)[number]>(LOG_LEVEL_ORDER);
+const LOG_LEVEL_SET = new Set<(typeof LOG_LEVEL_ORDER)[number]>(
+  LOG_LEVEL_ORDER
+);
 const DEFAULT_REDACT_KEYS = [
   "authorization",
   "cookie",
@@ -86,7 +88,11 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     }
   };
 
-  const log = (recordLevel: LogLevel, message: string, fields?: LogFields): void => {
+  const log = (
+    recordLevel: LogLevel,
+    message: string,
+    fields?: LogFields
+  ): void => {
     if (!shouldLog(level, recordLevel)) {
       return;
     }
@@ -102,7 +108,9 @@ export function createLogger(options: LoggerOptions = {}): Logger {
       level: recordLevel,
       logger: name,
       message: sanitizeMessage(message, redactValues),
-      ...(hasEntries(sanitizedFields) ? { fields: sanitizedFields as LogFields } : {})
+      ...(hasEntries(sanitizedFields)
+        ? { fields: sanitizedFields as LogFields }
+        : {})
     };
 
     write(record);
@@ -151,7 +159,11 @@ export function sanitizeLogValue(
   });
 }
 
-function sanitizeUnknown(value: unknown, state: SanitizerState, key?: string): unknown {
+function sanitizeUnknown(
+  value: unknown,
+  state: SanitizerState,
+  key?: string
+): unknown {
   if (key && shouldRedactKey(key, state.redactKeys)) {
     return REDACTED;
   }
@@ -160,7 +172,11 @@ function sanitizeUnknown(value: unknown, state: SanitizerState, key?: string): u
     return sanitizeMessage(value, state.redactValues);
   }
 
-  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
     return value;
   }
 
@@ -202,10 +218,16 @@ function sanitizeUnknown(value: unknown, state: SanitizerState, key?: string): u
     return output;
   }
 
-  return sanitizeMessage(inspect(value, { depth: 3, breakLength: Infinity }), state.redactValues);
+  return sanitizeMessage(
+    inspect(value, { depth: 3, breakLength: Infinity }),
+    state.redactValues
+  );
 }
 
-function sanitizeError(error: Error, state: SanitizerState): Record<string, unknown> {
+function sanitizeError(
+  error: Error,
+  state: SanitizerState
+): Record<string, unknown> {
   const output: Record<string, unknown> = {
     name: error.name,
     message: sanitizeMessage(error.message, state.redactValues)
@@ -228,12 +250,20 @@ function sanitizeError(error: Error, state: SanitizerState): Record<string, unkn
 }
 
 function writeConsoleRecord(record: LogRecord): void {
-  const stream = record.level === "error" || record.level === "warn" ? process.stderr : process.stdout;
+  const stream =
+    record.level === "error" || record.level === "warn"
+      ? process.stderr
+      : process.stdout;
   const fieldsText = record.fields ? ` ${JSON.stringify(record.fields)}` : "";
-  stream.write(`${record.timestamp} ${record.level.toUpperCase()} ${record.logger} ${record.message}${fieldsText}\n`);
+  stream.write(
+    `${record.timestamp} ${record.level.toUpperCase()} ${record.logger} ${record.message}${fieldsText}\n`
+  );
 }
 
-function mergeFields(base?: LogFields, extra?: LogFields): LogFields | undefined {
+function mergeFields(
+  base?: LogFields,
+  extra?: LogFields
+): LogFields | undefined {
   if (!base && !extra) {
     return undefined;
   }
@@ -245,7 +275,9 @@ function mergeFields(base?: LogFields, extra?: LogFields): LogFields | undefined
 }
 
 function hasEntries(value: unknown): boolean {
-  return typeof value === "object" && value !== null && Object.keys(value).length > 0;
+  return (
+    typeof value === "object" && value !== null && Object.keys(value).length > 0
+  );
 }
 
 function shouldLog(currentLevel: LogLevel, recordLevel: LogLevel): boolean {
@@ -280,7 +312,10 @@ function normalizeRedactValues(values?: readonly string[]): readonly string[] {
   return Array.from(normalized);
 }
 
-function sanitizeMessage(message: string, redactValues: readonly string[]): string {
+function sanitizeMessage(
+  message: string,
+  redactValues: readonly string[]
+): string {
   let sanitized = message;
 
   for (const secret of redactValues) {
@@ -292,5 +327,8 @@ function sanitizeMessage(message: string, redactValues: readonly string[]): stri
 
 function shouldRedactKey(key: string, redactKeys: readonly string[]): boolean {
   const normalizedKey = key.toLowerCase();
-  return redactKeys.some((candidate) => normalizedKey === candidate || normalizedKey.includes(candidate));
+  return redactKeys.some(
+    (candidate) =>
+      normalizedKey === candidate || normalizedKey.includes(candidate)
+  );
 }

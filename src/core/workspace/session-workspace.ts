@@ -13,7 +13,10 @@ import {
 
 export interface NewSessionWorkspaceInput {
   readonly defaultWorkspaceRoot: string;
-  readonly currentBoundSession?: Pick<WorkspaceSessionState, "workspaceRoot"> | null;
+  readonly currentBoundSession?: Pick<
+    WorkspaceSessionState,
+    "workspaceRoot"
+  > | null;
   readonly requestedCwd?: string | null;
 }
 
@@ -58,7 +61,8 @@ export async function initializeNewSessionWorkspace(
   input: NewSessionWorkspaceInput,
   options: WorkspaceMutationOptions = {}
 ): Promise<WorkspaceMutationResult> {
-  const workspaceRoot = input.currentBoundSession?.workspaceRoot ?? input.defaultWorkspaceRoot;
+  const workspaceRoot =
+    input.currentBoundSession?.workspaceRoot ?? input.defaultWorkspaceRoot;
   const requestedCwd = input.requestedCwd?.trim() ?? "";
 
   const initialSession: WorkspaceSessionState = {
@@ -70,7 +74,9 @@ export async function initializeNewSessionWorkspace(
   };
 
   const validation = await validateWorkspaceCandidate(initialSession, options);
-  const blockingCwdIssues = getBlockingIssues(filterIssuesByFields(validation.issues, ["cwd"]));
+  const blockingCwdIssues = getBlockingIssues(
+    filterIssuesByFields(validation.issues, ["cwd"])
+  );
 
   if (requestedCwd === "" || blockingCwdIssues.length === 0) {
     return toWorkspaceMutationResult(validation);
@@ -80,7 +86,10 @@ export async function initializeNewSessionWorkspace(
     ...validation.session,
     cwd: validation.session.workspaceRoot
   };
-  const fallbackValidation = await validateWorkspaceCandidate(fallbackSession, options);
+  const fallbackValidation = await validateWorkspaceCandidate(
+    fallbackSession,
+    options
+  );
 
   return toWorkspaceMutationResult(
     fallbackValidation,
@@ -130,7 +139,10 @@ export async function applyAccessScopeChange(
     };
   }
 
-  if (requestedScope !== "workspace" || !hasOnlyCwdScopeIssues(validation.issues)) {
+  if (
+    requestedScope !== "workspace" ||
+    !hasOnlyCwdScopeIssues(validation.issues)
+  ) {
     return {
       ok: false,
       session,
@@ -143,7 +155,10 @@ export async function applyAccessScopeChange(
     ...validation.session,
     cwd: validation.session.workspaceRoot
   };
-  const fallbackValidation = await validateWorkspaceCandidate(fallbackSession, options);
+  const fallbackValidation = await validateWorkspaceCandidate(
+    fallbackSession,
+    options
+  );
 
   return {
     ok: !hasBlockingIssues(fallbackValidation.issues),
@@ -180,14 +195,14 @@ export async function prepareAddDirConfirmation(
   }
 
   const candidate = createAddDirCandidate(session, normalizedPath);
-  const validation = await validateWorkspaceCandidate(candidate.session, options);
-  const pathIssues = filterIssuesByFields(
-    validation.issues,
-    [
-      "allowedDirs",
-      ...(candidate.addedField ? [candidate.addedField] : [])
-    ]
+  const validation = await validateWorkspaceCandidate(
+    candidate.session,
+    options
   );
+  const pathIssues = filterIssuesByFields(validation.issues, [
+    "allowedDirs",
+    ...(candidate.addedField ? [candidate.addedField] : [])
+  ]);
 
   if (hasBlockingIssues(pathIssues)) {
     return {
@@ -213,26 +228,17 @@ export async function confirmAddDir(
   confirmation: AddDirConfirmation,
   options: WorkspaceMutationOptions = {}
 ): Promise<WorkspaceMutationResult> {
-  if (confirmation.action !== "adddir") {
-    return {
-      ok: false,
-      session,
-      issues: [
-        {
-          code: "path_empty",
-          field: "confirmation.action",
-          message: "Unsupported confirmation action."
-        }
-      ]
-    };
-  }
-
-  const nextSession = createAddDirCandidate(session, confirmation.normalizedPath).session;
+  const nextSession = createAddDirCandidate(
+    session,
+    confirmation.normalizedPath
+  ).session;
 
   return validateWorkspaceMutation(session, nextSession, options);
 }
 
-export function buildRuntimeWorkspaceContext(session: WorkspaceSessionState): RuntimeWorkspaceContext {
+export function buildRuntimeWorkspaceContext(
+  session: WorkspaceSessionState
+): RuntimeWorkspaceContext {
   return {
     cwd: session.cwd,
     workspaceRoot: session.workspaceRoot,
@@ -289,7 +295,9 @@ function createAddDirCandidate(
   };
 }
 
-function createDuplicateRequestedPathIssue(normalizedPath: string): WorkspaceIssue {
+function createDuplicateRequestedPathIssue(
+  normalizedPath: string
+): WorkspaceIssue {
   return {
     code: "path_duplicate",
     field: "requestedPath",
@@ -305,13 +313,18 @@ function filterIssuesByFields(
   return issues.filter((issue) => allowedFields.has(issue.field));
 }
 
-function getBlockingIssues(issues: readonly WorkspaceIssue[]): readonly WorkspaceIssue[] {
+function getBlockingIssues(
+  issues: readonly WorkspaceIssue[]
+): readonly WorkspaceIssue[] {
   return issues.filter((issue) => issue.code !== "path_not_normalized");
 }
 
 function hasOnlyCwdScopeIssues(issues: readonly WorkspaceIssue[]): boolean {
   const blockingIssues = getBlockingIssues(issues);
-  return blockingIssues.length > 0 && blockingIssues.every((issue) => issue.field === "cwd");
+  return (
+    blockingIssues.length > 0 &&
+    blockingIssues.every((issue) => issue.field === "cwd")
+  );
 }
 
 async function validateWorkspaceCandidate(

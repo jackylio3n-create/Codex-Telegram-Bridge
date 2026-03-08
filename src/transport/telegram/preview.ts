@@ -10,10 +10,10 @@ import type {
 const DEFAULT_PREVIEW_MAX_LENGTH = 1500;
 const DEFAULT_FINAL_CHUNK_MAX_LENGTH = 3600;
 
-export interface TelegramPreviewPublisherOptions extends Pick<
+export type TelegramPreviewPublisherOptions = Pick<
   TelegramTransportOptions,
   "previewCapabilityMode" | "previewMaxLength" | "finalChunkMaxLength"
-> {}
+>;
 
 export class TelegramPreviewPublisher {
   readonly #client: TelegramBotClient;
@@ -21,14 +21,22 @@ export class TelegramPreviewPublisher {
   readonly #previewMaxLength: number;
   readonly #finalChunkMaxLength: number;
 
-  constructor(client: TelegramBotClient, options: TelegramPreviewPublisherOptions = {}) {
+  constructor(
+    client: TelegramBotClient,
+    options: TelegramPreviewPublisherOptions = {}
+  ) {
     this.#client = client;
     this.#previewCapabilityMode = options.previewCapabilityMode ?? "edit";
-    this.#previewMaxLength = options.previewMaxLength ?? DEFAULT_PREVIEW_MAX_LENGTH;
-    this.#finalChunkMaxLength = options.finalChunkMaxLength ?? DEFAULT_FINAL_CHUNK_MAX_LENGTH;
+    this.#previewMaxLength =
+      options.previewMaxLength ?? DEFAULT_PREVIEW_MAX_LENGTH;
+    this.#finalChunkMaxLength =
+      options.finalChunkMaxLength ?? DEFAULT_FINAL_CHUNK_MAX_LENGTH;
   }
 
-  async beginPreview(chatId: string, text: string): Promise<TelegramPreviewHandle> {
+  async beginPreview(
+    chatId: string,
+    text: string
+  ): Promise<TelegramPreviewHandle> {
     const previewText = createTelegramPreviewText(text, this.#previewMaxLength);
     if (this.#previewCapabilityMode === "none") {
       return {
@@ -47,7 +55,10 @@ export class TelegramPreviewPublisher {
     };
   }
 
-  async finalizePreview(handle: TelegramPreviewHandle, finalText: string): Promise<TelegramPreviewPublishResult> {
+  async finalizePreview(
+    handle: TelegramPreviewHandle,
+    finalText: string
+  ): Promise<TelegramPreviewPublishResult> {
     const chunks = chunkTelegramText(finalText, {
       maxLength: this.#finalChunkMaxLength
     });
@@ -70,7 +81,11 @@ export class TelegramPreviewPublisher {
           };
         }
 
-        await this.#client.editMessageText(handle.chatId, handle.previewMessageId, finalChunkText);
+        await this.#client.editMessageText(
+          handle.chatId,
+          handle.previewMessageId,
+          finalChunkText
+        );
         return {
           previewHandle: {
             ...handle,
@@ -81,22 +96,35 @@ export class TelegramPreviewPublisher {
       }
 
       const firstChunk = chunks[0]!.text;
-      const canKeepFirstChunkInPreview = firstChunk.length <= this.#previewMaxLength;
+      const canKeepFirstChunkInPreview =
+        firstChunk.length <= this.#previewMaxLength;
       const replacementText = canKeepFirstChunkInPreview
         ? firstChunk
         : `Completed. Sending ${chunks.length} message parts.`;
-      const remainingChunks = canKeepFirstChunkInPreview ? chunks.slice(1) : chunks;
+      const remainingChunks = canKeepFirstChunkInPreview
+        ? chunks.slice(1)
+        : chunks;
 
       if (handle.previewText === replacementText) {
-        const sentMessageIds = await this.#sendChunks(handle.chatId, remainingChunks);
+        const sentMessageIds = await this.#sendChunks(
+          handle.chatId,
+          remainingChunks
+        );
         return {
           previewHandle: handle,
           sentMessageIds: [handle.previewMessageId, ...sentMessageIds]
         };
       }
 
-      await this.#client.editMessageText(handle.chatId, handle.previewMessageId, replacementText);
-      const sentMessageIds = await this.#sendChunks(handle.chatId, remainingChunks);
+      await this.#client.editMessageText(
+        handle.chatId,
+        handle.previewMessageId,
+        replacementText
+      );
+      const sentMessageIds = await this.#sendChunks(
+        handle.chatId,
+        remainingChunks
+      );
 
       return {
         previewHandle: {
@@ -117,7 +145,10 @@ export class TelegramPreviewPublisher {
     }
   }
 
-  async sendFinalText(chatId: string, text: string): Promise<readonly number[]> {
+  async sendFinalText(
+    chatId: string,
+    text: string
+  ): Promise<readonly number[]> {
     const chunks = chunkTelegramText(text, {
       maxLength: this.#finalChunkMaxLength
     });
@@ -125,7 +156,10 @@ export class TelegramPreviewPublisher {
     return this.#sendChunks(chatId, chunks);
   }
 
-  async #sendChunks(chatId: string, chunks: readonly { readonly text: string }[]): Promise<readonly number[]> {
+  async #sendChunks(
+    chatId: string,
+    chunks: readonly { readonly text: string }[]
+  ): Promise<readonly number[]> {
     const sentMessageIds: number[] = [];
 
     for (const chunk of chunks) {
@@ -136,7 +170,10 @@ export class TelegramPreviewPublisher {
     return sentMessageIds;
   }
 
-  async updatePreview(handle: TelegramPreviewHandle, text: string): Promise<TelegramPreviewHandle> {
+  async updatePreview(
+    handle: TelegramPreviewHandle,
+    text: string
+  ): Promise<TelegramPreviewHandle> {
     const previewText = createTelegramPreviewText(text, this.#previewMaxLength);
     if (handle.mode === "none" || handle.previewMessageId === undefined) {
       return {
@@ -150,7 +187,11 @@ export class TelegramPreviewPublisher {
     }
 
     try {
-      await this.#client.editMessageText(handle.chatId, handle.previewMessageId, previewText);
+      await this.#client.editMessageText(
+        handle.chatId,
+        handle.previewMessageId,
+        previewText
+      );
       return {
         ...handle,
         previewText

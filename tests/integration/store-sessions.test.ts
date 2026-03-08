@@ -90,7 +90,9 @@ async function createStoreHarness(): Promise<{
   readonly store: BridgeStore;
   dispose(): Promise<void>;
 }> {
-  const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-store-"));
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-store-")
+  );
   const store = await createBridgeStore({
     databaseFilePath: join(tempRoot, "bridge.sqlite3")
   });

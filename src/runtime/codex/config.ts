@@ -9,7 +9,8 @@ export const SUPPORTED_CODEX_REASONING_EFFORTS = [
   "xhigh"
 ] as const;
 
-export type CodexReasoningEffort = typeof SUPPORTED_CODEX_REASONING_EFFORTS[number];
+export type CodexReasoningEffort =
+  (typeof SUPPORTED_CODEX_REASONING_EFFORTS)[number];
 
 export interface CodexReasoningConfigService {
   readonly supportedValues: readonly CodexReasoningEffort[];
@@ -17,11 +18,17 @@ export interface CodexReasoningConfigService {
   setCurrentEffort(value: CodexReasoningEffort): Promise<void>;
 }
 
-export function isCodexReasoningEffort(value: string): value is CodexReasoningEffort {
-  return (SUPPORTED_CODEX_REASONING_EFFORTS as readonly string[]).includes(value);
+export function isCodexReasoningEffort(
+  value: string
+): value is CodexReasoningEffort {
+  return (SUPPORTED_CODEX_REASONING_EFFORTS as readonly string[]).includes(
+    value
+  );
 }
 
-export function createCodexReasoningConfigService(codexHome: string): CodexReasoningConfigService {
+export function createCodexReasoningConfigService(
+  codexHome: string
+): CodexReasoningConfigService {
   return {
     supportedValues: SUPPORTED_CODEX_REASONING_EFFORTS,
     getCurrentEffort() {
@@ -33,7 +40,9 @@ export function createCodexReasoningConfigService(codexHome: string): CodexReaso
   };
 }
 
-export async function readCodexReasoningEffort(codexHome: string): Promise<string | null> {
+export async function readCodexReasoningEffort(
+  codexHome: string
+): Promise<string | null> {
   try {
     const raw = await readFile(join(codexHome, "config.toml"), "utf8");
     return readTomlString(raw, "model_reasoning_effort");
@@ -49,7 +58,7 @@ export async function writeCodexReasoningEffort(
   const configPath = join(codexHome, "config.toml");
   const nextLine = `model_reasoning_effort = "${effort}"`;
 
-  let current = "";
+  let current: string;
   try {
     current = await readFile(configPath, "utf8");
   } catch {
@@ -66,13 +75,13 @@ export async function writeCodexReasoningEffort(
 
 function appendConfigLine(raw: string, line: string): string {
   const trimmed = raw.trimEnd();
-  return trimmed === ""
-    ? `${line}\n`
-    : `${trimmed}\n${line}\n`;
+  return trimmed === "" ? `${line}\n` : `${trimmed}\n${line}\n`;
 }
 
 function readTomlString(raw: string, key: string): string | null {
-  const match = raw.match(new RegExp(`^\\s*${escapeRegularExpression(key)}\\s*=\\s*\"([^\"]*)\"`, "m"));
+  const match = raw.match(
+    new RegExp(`^\\s*${escapeRegularExpression(key)}\\s*=\\s*"([^"]*)"`, "m")
+  );
   return match?.[1] ?? null;
 }
 

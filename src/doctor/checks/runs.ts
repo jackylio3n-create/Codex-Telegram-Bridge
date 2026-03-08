@@ -1,8 +1,21 @@
-import type { BridgeStore, PendingPermissionRecord, SessionRecord } from "../../store/types.js";
+import type {
+  BridgeStore,
+  PendingPermissionRecord,
+  SessionRecord
+} from "../../store/types.js";
 import type { DoctorCheck, DoctorCheckStatus } from "../types.js";
 
-const ACTIVE_RUN_STATES = new Set<SessionRecord["runState"]>(["running", "waiting_approval", "cancelling"]);
-const TERMINAL_STATES = new Set<SessionRecord["runState"]>(["idle", "cancelled", "failed", "stale_recovered"]);
+const ACTIVE_RUN_STATES = new Set<SessionRecord["runState"]>([
+  "running",
+  "waiting_approval",
+  "cancelling"
+]);
+const TERMINAL_STATES = new Set<SessionRecord["runState"]>([
+  "idle",
+  "cancelled",
+  "failed",
+  "stale_recovered"
+]);
 
 export function buildRunsCheck(store: BridgeStore | undefined): DoctorCheck {
   if (!store) {
@@ -34,38 +47,54 @@ export function buildRunsCheck(store: BridgeStore | undefined): DoctorCheck {
 
   for (const session of sessions) {
     const activeApprovals = session.activeRunId
-      ? activeApprovalsByRun.get(createSessionRunKey(session.sessionId, session.activeRunId)) ?? []
+      ? (activeApprovalsByRun.get(
+          createSessionRunKey(session.sessionId, session.activeRunId)
+        ) ?? [])
       : [];
 
     if (ACTIVE_RUN_STATES.has(session.runState) && !session.activeRunId) {
       status = "error";
-      details.push(`session=${session.sessionId} | run_state=${session.runState} requires active_run_id.`);
+      details.push(
+        `session=${session.sessionId} | run_state=${session.runState} requires active_run_id.`
+      );
     }
 
     if (TERMINAL_STATES.has(session.runState) && session.activeRunId) {
       status = maxStatus(status, "warning");
-      details.push(`session=${session.sessionId} | terminal run_state=${session.runState} should not keep active_run_id=${session.activeRunId}.`);
+      details.push(
+        `session=${session.sessionId} | terminal run_state=${session.runState} should not keep active_run_id=${session.activeRunId}.`
+      );
     }
 
     if (session.runState === "waiting_approval") {
       if (!session.activeRunId) {
         status = "error";
-        details.push(`session=${session.sessionId} | waiting_approval has no active_run_id.`);
+        details.push(
+          `session=${session.sessionId} | waiting_approval has no active_run_id.`
+        );
       } else if (activeApprovals.length === 0) {
         status = "error";
-        details.push(`session=${session.sessionId} | waiting_approval has no unresolved approval for run=${session.activeRunId}.`);
+        details.push(
+          `session=${session.sessionId} | waiting_approval has no unresolved approval for run=${session.activeRunId}.`
+        );
       } else if (activeApprovals.every((record) => isExpired(record))) {
         status = maxStatus(status, "warning");
-        details.push(`session=${session.sessionId} | all unresolved approvals for run=${session.activeRunId} are already expired.`);
+        details.push(
+          `session=${session.sessionId} | all unresolved approvals for run=${session.activeRunId} are already expired.`
+        );
       } else if (activeApprovals.length > 1) {
         status = maxStatus(status, "warning");
-        details.push(`session=${session.sessionId} | waiting_approval has ${activeApprovals.length} unresolved approvals for run=${session.activeRunId}.`);
+        details.push(
+          `session=${session.sessionId} | waiting_approval has ${activeApprovals.length} unresolved approvals for run=${session.activeRunId}.`
+        );
       }
     }
 
     if (session.runState === "running" && activeApprovals.length > 0) {
       status = maxStatus(status, "warning");
-      details.push(`session=${session.sessionId} | running still has ${activeApprovals.length} unresolved approval(s).`);
+      details.push(
+        `session=${session.sessionId} | running still has ${activeApprovals.length} unresolved approval(s).`
+      );
     }
   }
 
@@ -111,7 +140,10 @@ function createSessionRunKey(sessionId: string, runId: string): string {
   return `${sessionId}\u0000${runId}`;
 }
 
-function maxStatus(left: DoctorCheckStatus, right: DoctorCheckStatus): DoctorCheckStatus {
+function maxStatus(
+  left: DoctorCheckStatus,
+  right: DoctorCheckStatus
+): DoctorCheckStatus {
   if (left === "error" || right === "error") {
     return "error";
   }

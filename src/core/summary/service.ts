@@ -4,7 +4,6 @@ import type {
   AuditLogsRepository,
   PendingPermissionRecord,
   PendingPermissionsRepository,
-  SessionRecord,
   SessionSummariesRepository,
   SessionsRepository
 } from "../../store/types.js";
@@ -12,21 +11,32 @@ import type { RollingSummaryResult, RollingSummarySnapshot } from "./types.js";
 
 const SUMMARY_PENDING_APPROVAL_LIMIT = 5;
 const SUMMARY_AUDIT_SECTIONS = [
-  { eventType: "approval_decision", snapshotKey: "recentApprovalDecisions", limit: 5 },
+  {
+    eventType: "approval_decision",
+    snapshotKey: "recentApprovalDecisions",
+    limit: 5
+  },
   { eventType: "user_command", snapshotKey: "recentCommands", limit: 5 },
   { eventType: "file_change", snapshotKey: "recentBoundaryChanges", limit: 5 },
   { eventType: "run_cancel", snapshotKey: "recentRunCancels", limit: 2 },
-  { eventType: "resume_recovery", snapshotKey: "recentResumeRecoveries", limit: 2 }
+  {
+    eventType: "resume_recovery",
+    snapshotKey: "recentResumeRecoveries",
+    limit: 2
+  }
 ] as const;
-const SUMMARY_AUDIT_EVENT_LIMITS = SUMMARY_AUDIT_SECTIONS.map(({ eventType, limit }) => ({
-  eventType,
-  limit
-})) as readonly AuditLogEventLimit[];
-const SUMMARY_TRIGGER_EVENT_TYPES = new Set(
-  [...SUMMARY_AUDIT_EVENT_LIMITS.map((entry) => entry.eventType), "agent_text"]
-);
+const SUMMARY_AUDIT_EVENT_LIMITS = SUMMARY_AUDIT_SECTIONS.map(
+  ({ eventType, limit }) => ({
+    eventType,
+    limit
+  })
+) as readonly AuditLogEventLimit[];
+const SUMMARY_TRIGGER_EVENT_TYPES = new Set([
+  ...SUMMARY_AUDIT_EVENT_LIMITS.map((entry) => entry.eventType),
+  "agent_text"
+]);
 
-type SummaryAuditSection = typeof SUMMARY_AUDIT_SECTIONS[number];
+type SummaryAuditSection = (typeof SUMMARY_AUDIT_SECTIONS)[number];
 type SummaryAuditSectionKey = SummaryAuditSection["snapshotKey"];
 type SummaryAuditCollections = Record<SummaryAuditSectionKey, string[]>;
 
@@ -42,12 +52,15 @@ export class SummaryService {
   readonly #clock: () => Date;
 
   constructor(
-    store: Pick<{
-      readonly sessions: SessionsRepository;
-      readonly pendingPermissions: PendingPermissionsRepository;
-      readonly auditLogs: AuditLogsRepository;
-      readonly sessionSummaries: SessionSummariesRepository;
-    }, "sessions" | "pendingPermissions" | "auditLogs" | "sessionSummaries">,
+    store: Pick<
+      {
+        readonly sessions: SessionsRepository;
+        readonly pendingPermissions: PendingPermissionsRepository;
+        readonly auditLogs: AuditLogsRepository;
+        readonly sessionSummaries: SessionSummariesRepository;
+      },
+      "sessions" | "pendingPermissions" | "auditLogs" | "sessionSummaries"
+    >,
     options: SummaryServiceOptions = {}
   ) {
     this.#sessions = store.sessions;
@@ -72,7 +85,10 @@ export class SummaryService {
       resolved: false,
       limit: SUMMARY_PENDING_APPROVAL_LIMIT
     });
-    const auditEvents = this.#auditLogs.listRecentByEventType(sessionId, SUMMARY_AUDIT_EVENT_LIMITS);
+    const auditEvents = this.#auditLogs.listRecentByEventType(
+      sessionId,
+      SUMMARY_AUDIT_EVENT_LIMITS
+    );
     const recentAudit = collectRecentAuditSections(auditEvents);
 
     const snapshot: RollingSummarySnapshot = {
@@ -166,10 +182,15 @@ function formatList(entries: readonly string[]): string {
   return entries.length > 0 ? entries.join(", ") : "none";
 }
 
-function formatPendingApprovals(records: readonly PendingPermissionRecord[]): readonly string[] {
+function formatPendingApprovals(
+  records: readonly PendingPermissionRecord[]
+): readonly string[] {
   return records
     .slice(0, SUMMARY_PENDING_APPROVAL_LIMIT)
-    .map((record) => `${record.permissionId} | ${record.toolName} | expires ${record.expiresAt}`);
+    .map(
+      (record) =>
+        `${record.permissionId} | ${record.toolName} | expires ${record.expiresAt}`
+    );
 }
 
 function collectRecentAuditSections(records: readonly AuditLogRecord[]): {
@@ -220,8 +241,12 @@ function createSummaryAuditCollections(): SummaryAuditCollections {
   };
 }
 
-function haveCollectedAllSummaryAuditSections(collected: SummaryAuditCollections): boolean {
-  return SUMMARY_AUDIT_SECTIONS.every((section) => collected[section.snapshotKey].length >= section.limit);
+function haveCollectedAllSummaryAuditSections(
+  collected: SummaryAuditCollections
+): boolean {
+  return SUMMARY_AUDIT_SECTIONS.every(
+    (section) => collected[section.snapshotKey].length >= section.limit
+  );
 }
 
 function formatAuditEvent(record: AuditLogRecord): string {
@@ -233,13 +258,15 @@ function formatAuditPayload(payload: unknown): string {
     return "no payload";
   }
 
-  const entries = Object.entries(payload as Record<string, unknown>).map(([key, value]) => {
-    if (Array.isArray(value)) {
-      return `${key}=${value.join(",")}`;
-    }
+  const entries = Object.entries(payload as Record<string, unknown>).map(
+    ([key, value]) => {
+      if (Array.isArray(value)) {
+        return `${key}=${value.join(",")}`;
+      }
 
-    return `${key}=${value === null ? "null" : String(value)}`;
-  });
+      return `${key}=${value === null ? "null" : String(value)}`;
+    }
+  );
 
   return entries.join("; ");
 }

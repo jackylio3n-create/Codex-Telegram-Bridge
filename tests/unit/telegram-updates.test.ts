@@ -191,7 +191,10 @@ test("mapTelegramUpdateToInbound verifies the first plain-text password and then
 
   assert.equal(result.kind, "ignored");
   assert.equal(result.ignored.reason, "language_required");
-  assert.match(dependencies.sentMessages[0]?.text ?? "", /请选择提示语言|choose your prompt language/);
+  assert.match(
+    dependencies.sentMessages[0]?.text ?? "",
+    /请选择提示语言|choose your prompt language/
+  );
   assert.ok(dependencies.authState.get("456")?.verifiedAt);
   assert.equal(dependencies.authState.get("456")?.preferredLanguage, null);
 });
@@ -201,7 +204,10 @@ test("mapTelegramUpdateToInbound stores the selected prompt language after verif
     verificationPasswordHash: hashVerificationPassword("bridge-secret")
   });
 
-  await mapTelegramUpdateToInbound(createTextUpdate(1, "bridge-secret"), dependencies);
+  await mapTelegramUpdateToInbound(
+    createTextUpdate(1, "bridge-secret"),
+    dependencies
+  );
 
   const result = await mapTelegramUpdateToInbound(
     {
@@ -324,18 +330,32 @@ test("mapTelegramUpdateToInbound reuses access checks for callbacks and answers 
 
   assert.equal(result.kind, "ignored");
   assert.equal(result.ignored.reason, "owner_not_allowed");
-  assert.equal(dependencies.answeredCallbacks[0]?.callbackQueryId, "callback-owner-mismatch");
-  assert.equal(dependencies.answeredCallbacks[0]?.text, "Expired or already handled.");
+  assert.equal(
+    dependencies.answeredCallbacks[0]?.callbackQueryId,
+    "callback-owner-mismatch"
+  );
+  assert.equal(
+    dependencies.answeredCallbacks[0]?.text,
+    "Expired or already handled."
+  );
 });
 
-function createDependencies(options: {
-  readonly verificationPasswordHash?: string | null;
-  readonly ownerUserId?: string | null;
-  readonly ownerChatId?: string | null;
-} = {}) {
+function createDependencies(
+  options: {
+    readonly verificationPasswordHash?: string | null;
+    readonly ownerUserId?: string | null;
+    readonly ownerChatId?: string | null;
+  } = {}
+) {
   const authState = new InMemoryTelegramUserAuthRepository();
-  const sentMessages: Array<{ readonly chatId: string; readonly text: string }> = [];
-  const answeredCallbacks: Array<{ readonly callbackQueryId: string; readonly text?: string }> = [];
+  const sentMessages: Array<{
+    readonly chatId: string;
+    readonly text: string;
+  }> = [];
+  const answeredCallbacks: Array<{
+    readonly callbackQueryId: string;
+    readonly text?: string;
+  }> = [];
 
   return {
     allowedUserIds: new Set(["456"]),
@@ -351,7 +371,10 @@ function createDependencies(options: {
       telegramUserAuth: authState
     },
     client: {
-      async answerCallbackQuery(callbackQueryId: string, options?: { text?: string }) {
+      async answerCallbackQuery(
+        callbackQueryId: string,
+        options?: { text?: string }
+      ) {
         answeredCallbacks.push({
           callbackQueryId,
           ...(options?.text ? { text: options.text } : {})
@@ -409,31 +432,42 @@ function createBaseMessage() {
 }
 
 class InMemoryTelegramUserAuthRepository {
-  readonly #records = new Map<string, {
-    userId: string;
-    latestChatId: string;
-    firstSeenAt: string;
-    verifiedAt: string | null;
-    preferredLanguage: "zh" | "en" | null;
-    failedAttempts: number;
-    lastFailedAt: string | null;
-    bannedAt: string | null;
-    updatedAt: string;
-  }>();
+  readonly #records = new Map<
+    string,
+    {
+      userId: string;
+      latestChatId: string;
+      firstSeenAt: string;
+      verifiedAt: string | null;
+      preferredLanguage: "zh" | "en" | null;
+      failedAttempts: number;
+      lastFailedAt: string | null;
+      bannedAt: string | null;
+      updatedAt: string;
+    }
+  >();
 
   get(userId: string) {
     return this.#records.get(userId) ?? null;
   }
 
   findByChatId(chatId: string) {
-    return [...this.#records.values()].find((record) => record.latestChatId === chatId) ?? null;
+    return (
+      [...this.#records.values()].find(
+        (record) => record.latestChatId === chatId
+      ) ?? null
+    );
   }
 
   list() {
     return [...this.#records.values()];
   }
 
-  getOrCreateFirstSeen(input: { userId: string; chatId: string; firstSeenAt?: string }) {
+  getOrCreateFirstSeen(input: {
+    userId: string;
+    chatId: string;
+    firstSeenAt?: string;
+  }) {
     const existing = this.#records.get(input.userId);
     if (existing) {
       const updated = {
@@ -480,7 +514,12 @@ class InMemoryTelegramUserAuthRepository {
     return updated;
   }
 
-  setPreferredLanguage(input: { userId: string; chatId: string; preferredLanguage: "zh" | "en"; selectedAt?: string }) {
+  setPreferredLanguage(input: {
+    userId: string;
+    chatId: string;
+    preferredLanguage: "zh" | "en";
+    selectedAt?: string;
+  }) {
     const existing = this.getOrCreateFirstSeen({
       userId: input.userId,
       chatId: input.chatId,
@@ -497,7 +536,12 @@ class InMemoryTelegramUserAuthRepository {
     return updated;
   }
 
-  recordFailedAttempt(input: { userId: string; chatId: string; failedAt?: string; banThreshold: number }) {
+  recordFailedAttempt(input: {
+    userId: string;
+    chatId: string;
+    failedAt?: string;
+    banThreshold: number;
+  }) {
     const existing = this.getOrCreateFirstSeen({
       userId: input.userId,
       chatId: input.chatId,
@@ -511,7 +555,8 @@ class InMemoryTelegramUserAuthRepository {
       preferredLanguage: existing.preferredLanguage,
       failedAttempts,
       lastFailedAt: failedAt,
-      bannedAt: failedAttempts >= input.banThreshold ? failedAt : existing.bannedAt,
+      bannedAt:
+        failedAttempts >= input.banThreshold ? failedAt : existing.bannedAt,
       updatedAt: failedAt
     };
     this.#records.set(input.userId, updated);

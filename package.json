@@ -11,6 +11,11 @@
     "build": "tsc -p tsconfig.json",
     "clean": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src tests",
+    "lint:shell": "node scripts/run-shellcheck.mjs scripts/install-ubuntu.sh",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts",
     "cli": "tsx src/cli/main.ts",
     "start": "tsx src/cli/main.ts start",
     "serve": "tsx src/cli/main.ts serve",
@@ -24,8 +29,13 @@
     "node": ">=24.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.0.0",
+    "eslint": "^10.0.3",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.1",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
   }
 }

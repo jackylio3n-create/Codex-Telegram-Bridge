@@ -15,9 +15,11 @@ test("commands service creates and binds a new session, then reports status", as
   const harness = await createHarness();
 
   try {
-    const created = await harness.commands.dispatch(createCommand("new", {
-      requestedCwd: "/workspaces/main/app"
-    }));
+    const created = await harness.commands.dispatch(
+      createCommand("new", {
+        requestedCwd: "/workspaces/main/app"
+      })
+    );
     assert.equal(created.status, "ok");
     assert.equal(created.data?.sessionId, "session-1");
 
@@ -46,9 +48,18 @@ test("commands service help lists commands with descriptions", async () => {
   try {
     const help = await harness.commands.dispatch(createCommand("help"));
     assert.equal(help.status, "ok");
-    assert.match(help.message, /\/cd <absolute_path> - Update the current session cwd\./);
-    assert.match(help.message, /\/scope \[workspace\|system\] - Show or change the current session access scope\./);
-    assert.match(help.message, /\/stat - Show the current bound session or Codex status summary\./);
+    assert.match(
+      help.message,
+      /\/cd <absolute_path> - Update the current session cwd\./
+    );
+    assert.match(
+      help.message,
+      /\/scope \[workspace\|system\] - Show or change the current session access scope\./
+    );
+    assert.match(
+      help.message,
+      /\/stat - Show the current bound session or Codex status summary\./
+    );
     assert.match(help.message, /\/help - Show this command reference\./);
   } finally {
     await harness.dispose();
@@ -63,9 +74,18 @@ test("commands service help follows the resolved prompt language", async () => {
   try {
     const help = await harness.commands.dispatch(createCommand("help"));
     assert.equal(help.status, "ok");
-    assert.match(help.message, /\/cd <absolute_path> - 修改当前 session 的 cwd。/);
-    assert.match(help.message, /\/scope \[workspace\|system\] - 查看或切换当前 session 的访问范围。/);
-    assert.match(help.message, /\/stat - 查看当前绑定 session 或 Codex 状态摘要。/);
+    assert.match(
+      help.message,
+      /\/cd <absolute_path> - 修改当前 session 的 cwd。/
+    );
+    assert.match(
+      help.message,
+      /\/scope \[workspace\|system\] - 查看或切换当前 session 的访问范围。/
+    );
+    assert.match(
+      help.message,
+      /\/stat - 查看当前绑定 session 或 Codex 状态摘要。/
+    );
     assert.match(help.message, /\/help - 显示这份命令说明。/);
   } finally {
     await harness.dispose();
@@ -88,11 +108,16 @@ test("commands service blocks workspace mutation commands while the session acto
       startedAt: "2026-03-06T15:00:00.000Z"
     });
 
-    const rejected = await harness.commands.dispatch(createCommand("cwd", {
-      path: "/workspaces/main/blocked"
-    }));
+    const rejected = await harness.commands.dispatch(
+      createCommand("cwd", {
+        path: "/workspaces/main/blocked"
+      })
+    );
     assert.equal(rejected.status, "rejected");
-    assert.equal(rejected.message, "/cwd is blocked while the current bound session is active.");
+    assert.equal(
+      rejected.message,
+      "/cwd is blocked while the current bound session is active."
+    );
   } finally {
     await harness.dispose();
   }
@@ -130,13 +155,17 @@ test("commands service resolves /perm approval decisions against the bound sessi
       requestedAt: "2026-03-06T16:01:00.000Z"
     });
 
-    const resolved = await harness.commands.dispatch(createCommand("perm", {
-      args: ["approve", pending.permission.permissionId]
-    }));
+    const resolved = await harness.commands.dispatch(
+      createCommand("perm", {
+        args: ["approve", pending.permission.permissionId]
+      })
+    );
     assert.equal(resolved.status, "ok");
     assert.equal(resolved.message, "Approval granted.");
 
-    const savedPermission = harness.store.pendingPermissions.get(pending.permission.permissionId);
+    const savedPermission = harness.store.pendingPermissions.get(
+      pending.permission.permissionId
+    );
     assert.equal(savedPermission?.resolution, "approved");
 
     const snapshot = harness.routing.getSessionSnapshot(sessionId);
@@ -179,12 +208,18 @@ test("commands service fails the session when /perm denies an approval", async (
       requestedAt: "2026-03-06T16:11:00.000Z"
     });
 
-    const denied = await harness.commands.dispatch(createCommand("perm", {
-      args: ["deny", pending.permission.permissionId]
-    }));
+    const denied = await harness.commands.dispatch(
+      createCommand("perm", {
+        args: ["deny", pending.permission.permissionId]
+      })
+    );
     assert.equal(denied.status, "ok");
     assert.equal(denied.message, "Approval denied.");
-    assert.equal(harness.store.pendingPermissions.get(pending.permission.permissionId)?.resolution, "denied");
+    assert.equal(
+      harness.store.pendingPermissions.get(pending.permission.permissionId)
+        ?.resolution,
+      "denied"
+    );
 
     const snapshot = harness.routing.getSessionSnapshot(sessionId);
     assert.equal(snapshot?.runState, "failed");
@@ -220,8 +255,14 @@ test("commands service hydrates persisted bindings before routing stop commands"
 
     const stopped = await harness.commands.dispatch(createCommand("stop"));
     assert.equal(stopped.status, "ok");
-    assert.equal(harness.routing.getChatBinding("chat-1").sessionId, "session-restart");
-    assert.equal(harness.routing.getSessionSnapshot("session-restart")?.runState, "cancelling");
+    assert.equal(
+      harness.routing.getChatBinding("chat-1").sessionId,
+      "session-restart"
+    );
+    assert.equal(
+      harness.routing.getSessionSnapshot("session-restart")?.runState,
+      "cancelling"
+    );
   } finally {
     await harness.dispose();
   }
@@ -255,22 +296,38 @@ test("commands service preserves waiting approval state when binding an existing
       createdAt: "2026-03-06T16:30:00.000Z"
     });
 
-    const bound = await harness.commands.dispatch(createCommand("bind", {
-      targetSessionId: "session-existing"
-    }));
+    const bound = await harness.commands.dispatch(
+      createCommand("bind", {
+        targetSessionId: "session-existing"
+      })
+    );
     assert.equal(bound.status, "ok");
 
     const status = await harness.commands.dispatch(createCommand("status"));
-    assert.equal(status.data?.status.actorSnapshot?.runState, "waiting_approval");
-    assert.equal(status.data?.status.actorSnapshot?.waitingPermissionId, "perm-existing");
+    assert.equal(
+      status.data?.status.actorSnapshot?.runState,
+      "waiting_approval"
+    );
+    assert.equal(
+      status.data?.status.actorSnapshot?.waitingPermissionId,
+      "perm-existing"
+    );
 
-    const resolved = await harness.commands.dispatch(createCommand("perm", {
-      args: ["approve", "perm-existing"]
-    }));
+    const resolved = await harness.commands.dispatch(
+      createCommand("perm", {
+        args: ["approve", "perm-existing"]
+      })
+    );
     assert.equal(resolved.status, "ok");
     assert.equal(resolved.message, "Approval granted.");
-    assert.equal(harness.store.pendingPermissions.get("perm-existing")?.resolution, "approved");
-    assert.equal(harness.routing.getSessionSnapshot("session-existing")?.runState, "running");
+    assert.equal(
+      harness.store.pendingPermissions.get("perm-existing")?.resolution,
+      "approved"
+    );
+    assert.equal(
+      harness.routing.getSessionSnapshot("session-existing")?.runState,
+      "running"
+    );
   } finally {
     await harness.dispose();
   }
@@ -331,7 +388,9 @@ test("telegram /perm command maps to tokenized args and resolves through command
         store: harness.store,
         client: {
           async answerCallbackQuery() {
-            throw new Error("answerCallbackQuery should not be called for Telegram text commands.");
+            throw new Error(
+              "answerCallbackQuery should not be called for Telegram text commands."
+            );
           }
         },
         callbackReceivedText: "Received.",
@@ -347,12 +406,19 @@ test("telegram /perm command maps to tokenized args and resolves through command
     const inbound = mapped.envelope.inboundMessage;
     assert.equal(inbound.type, "command");
     assert.equal(inbound.command, "perm");
-    assert.deepEqual(inbound.args, ["approve", pending.permission.permissionId]);
+    assert.deepEqual(inbound.args, [
+      "approve",
+      pending.permission.permissionId
+    ]);
 
     const resolved = await harness.commands.dispatch(inbound);
     assert.equal(resolved.status, "ok");
     assert.equal(resolved.message, "Approval granted.");
-    assert.equal(harness.store.pendingPermissions.get(pending.permission.permissionId)?.resolution, "approved");
+    assert.equal(
+      harness.store.pendingPermissions.get(pending.permission.permissionId)
+        ?.resolution,
+      "approved"
+    );
   } finally {
     await harness.dispose();
   }
@@ -372,23 +438,27 @@ test("commands service rejects /perm list when no session is bound", async () =>
 
 test("commands service status uses the injected codex status provider output", async () => {
   const harness = await createHarness({
-    statusTextProvider: async () => [
-      "Model: gpt-5.4",
-      "Reasoning effort: xhigh",
-      "5-hour limit remaining (latest known): 85%",
-      "Weekly limit remaining (latest known): 96%"
-    ].join("\n")
+    statusTextProvider: async () =>
+      [
+        "Model: gpt-5.4",
+        "Reasoning effort: xhigh",
+        "5-hour limit remaining (latest known): 85%",
+        "Weekly limit remaining (latest known): 96%"
+      ].join("\n")
   });
 
   try {
     const status = await harness.commands.dispatch(createCommand("status"));
     assert.equal(status.status, "ok");
-    assert.equal(status.message, [
-      "Model: gpt-5.4",
-      "Reasoning effort: xhigh",
-      "5-hour limit remaining (latest known): 85%",
-      "Weekly limit remaining (latest known): 96%"
-    ].join("\n"));
+    assert.equal(
+      status.message,
+      [
+        "Model: gpt-5.4",
+        "Reasoning effort: xhigh",
+        "5-hour limit remaining (latest known): 85%",
+        "Weekly limit remaining (latest known): 96%"
+      ].join("\n")
+    );
   } finally {
     await harness.dispose();
   }
@@ -413,11 +483,16 @@ test("commands service reports and updates reasoning effort through the injected
     assert.equal(current.status, "ok");
     assert.match(current.message, /Current reasoning effort: high\./);
 
-    const updated = await harness.commands.dispatch(createCommand("reasoning", {
-      args: ["xhigh"]
-    }));
+    const updated = await harness.commands.dispatch(
+      createCommand("reasoning", {
+        args: ["xhigh"]
+      })
+    );
     assert.equal(updated.status, "ok");
-    assert.equal(updated.message, "Updated reasoning effort to xhigh. This applies to new Codex runs.");
+    assert.equal(
+      updated.message,
+      "Updated reasoning effort to xhigh. This applies to new Codex runs."
+    );
     assert.equal(currentEffort, "xhigh");
   } finally {
     await harness.dispose();
@@ -436,24 +511,37 @@ test("commands service switches a bound session between workspace and system sco
     assert.equal(current.status, "ok");
     assert.equal(current.message, "Current access scope is workspace.");
 
-    const widened = await harness.commands.dispatch(createCommand("scope", {
-      args: ["system"]
-    }));
+    const widened = await harness.commands.dispatch(
+      createCommand("scope", {
+        args: ["system"]
+      })
+    );
     assert.equal(widened.status, "ok");
     assert.equal(widened.message, "Updated access scope to system.");
-    assert.equal(harness.store.sessions.get(sessionId ?? "")?.accessScope, "system");
+    assert.equal(
+      harness.store.sessions.get(sessionId ?? "")?.accessScope,
+      "system"
+    );
 
     harness.store.sessions.update(sessionId ?? "", {
       cwd: "/etc"
     });
 
-    const narrowed = await harness.commands.dispatch(createCommand("scope", {
-      args: ["workspace"]
-    }));
+    const narrowed = await harness.commands.dispatch(
+      createCommand("scope", {
+        args: ["workspace"]
+      })
+    );
     assert.equal(narrowed.status, "ok");
     assert.match(narrowed.message, /Cwd moved back to \/workspaces\/main/);
-    assert.equal(harness.store.sessions.get(sessionId ?? "")?.accessScope, "workspace");
-    assert.equal(harness.store.sessions.get(sessionId ?? "")?.cwd, DEFAULT_WORKSPACE_ROOT);
+    assert.equal(
+      harness.store.sessions.get(sessionId ?? "")?.accessScope,
+      "workspace"
+    );
+    assert.equal(
+      harness.store.sessions.get(sessionId ?? "")?.cwd,
+      DEFAULT_WORKSPACE_ROOT
+    );
   } finally {
     await harness.dispose();
   }
@@ -467,15 +555,19 @@ test("commands service rejects unsupported reasoning effort values", async () =>
         return "high";
       },
       async setCurrentEffort() {
-        throw new Error("setCurrentEffort should not be called for invalid values.");
+        throw new Error(
+          "setCurrentEffort should not be called for invalid values."
+        );
       }
     }
   });
 
   try {
-    const rejected = await harness.commands.dispatch(createCommand("reasoning", {
-      args: ["turbo"]
-    }));
+    const rejected = await harness.commands.dispatch(
+      createCommand("reasoning", {
+        args: ["turbo"]
+      })
+    );
     assert.equal(rejected.status, "rejected");
     assert.match(rejected.message, /Unsupported reasoning effort "turbo"/);
   } finally {
@@ -544,9 +636,11 @@ test("commands service prunes inactive unbound sessions and releases routing act
     harness.routing.registerSession("session-keep");
     harness.routing.registerSession("session-old");
 
-    const pruned = await harness.commands.dispatch(createCommand("prune", {
-      args: ["1"]
-    }));
+    const pruned = await harness.commands.dispatch(
+      createCommand("prune", {
+        args: ["1"]
+      })
+    );
     assert.equal(pruned.status, "ok");
     assert.match(pruned.message, /Pruned 1 inactive unbound session\./);
     assert.match(pruned.message, /Kept 1 newest inactive unbound session\./);
@@ -573,22 +667,26 @@ async function createHarness(): Promise<{
   readonly commands: CommandsService;
   dispose(): Promise<void>;
 }>;
-async function createHarness(options: {
-  readonly statusTextProvider?: () => Promise<string> | string;
-  readonly languageResolver?: (userId: string) => "zh" | "en";
-  readonly reasoningConfigService?: {
-    readonly supportedValues: readonly string[];
-    getCurrentEffort(): Promise<string | null> | string | null;
-    setCurrentEffort(value: string): Promise<void> | void;
-  };
-} = {}): Promise<{
+async function createHarness(
+  options: {
+    readonly statusTextProvider?: () => Promise<string> | string;
+    readonly languageResolver?: (userId: string) => "zh" | "en";
+    readonly reasoningConfigService?: {
+      readonly supportedValues: readonly string[];
+      getCurrentEffort(): Promise<string | null> | string | null;
+      setCurrentEffort(value: string): Promise<void> | void;
+    };
+  } = {}
+): Promise<{
   readonly store: BridgeStore;
   readonly routing: InMemoryRoutingCore;
   readonly approval: ApprovalService;
   readonly commands: CommandsService;
   dispose(): Promise<void>;
 }> {
-  const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-commands-"));
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-commands-")
+  );
   const store = await createBridgeStore({
     databaseFilePath: join(tempRoot, "bridge.sqlite3")
   });
@@ -602,9 +700,15 @@ async function createHarness(options: {
     workspaceMutationOptions: {
       requireExistingPaths: false
     },
-    ...(options.languageResolver ? { languageResolver: options.languageResolver } : {}),
-    ...(options.statusTextProvider ? { statusTextProvider: options.statusTextProvider } : {}),
-    ...(options.reasoningConfigService ? { reasoningConfigService: options.reasoningConfigService } : {})
+    ...(options.languageResolver
+      ? { languageResolver: options.languageResolver }
+      : {}),
+    ...(options.statusTextProvider
+      ? { statusTextProvider: options.statusTextProvider }
+      : {}),
+    ...(options.reasoningConfigService
+      ? { reasoningConfigService: options.reasoningConfigService }
+      : {})
   });
 
   return {
@@ -620,7 +724,17 @@ async function createHarness(options: {
 }
 
 function createCommand(
-  command: "bind" | "new" | "status" | "stop" | "cwd" | "perm" | "prune" | "reasoning" | "scope" | "help",
+  command:
+    | "bind"
+    | "new"
+    | "status"
+    | "stop"
+    | "cwd"
+    | "perm"
+    | "prune"
+    | "reasoning"
+    | "scope"
+    | "help",
   extra: Record<string, unknown> = {}
 ) {
   return {

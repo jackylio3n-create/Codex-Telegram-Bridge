@@ -1,6 +1,6 @@
 import type { BridgeStore } from "../../store/types.js";
 import type { NormalizedInboundMessage } from "../../core/types/index.js";
-import { TelegramBotClient } from "./client.js";
+import type { TelegramBotClient } from "./client.js";
 import type {
   TelegramIgnoredUpdate,
   TelegramInboundEnvelope,
@@ -12,12 +12,17 @@ import { getTransportDefaults, mapTelegramUpdateToInbound } from "./updates.js";
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 30;
 const DEFAULT_OFFSET_CHANNEL_KEY = "telegram:getUpdates";
 
-export interface TelegramPollingServiceOptions extends TelegramTransportOptions {}
+export type TelegramPollingServiceOptions = TelegramTransportOptions;
 
-type TelegramPollingRuntimeOptions = Omit<Required<Pick<
-  TelegramPollingServiceOptions,
-  "allowedUserIds" | "pollingTimeoutSeconds" | "offsetChannelKey"
->>, "allowedUserIds"> & {
+type TelegramPollingRuntimeOptions = Omit<
+  Required<
+    Pick<
+      TelegramPollingServiceOptions,
+      "allowedUserIds" | "pollingTimeoutSeconds" | "offsetChannelKey"
+    >
+  >,
+  "allowedUserIds"
+> & {
   readonly allowedUserIds: ReadonlySet<string>;
   readonly verificationPasswordHash: string | null;
   readonly ownerUserId: string | null;
@@ -28,13 +33,19 @@ type TelegramPollingRuntimeOptions = Omit<Required<Pick<
 
 export class TelegramPollingService {
   readonly #client: TelegramBotClient;
-  readonly #store: Pick<BridgeStore, "channelOffsets" | "pendingPermissions" | "telegramUserAuth">;
+  readonly #store: Pick<
+    BridgeStore,
+    "channelOffsets" | "pendingPermissions" | "telegramUserAuth"
+  >;
   readonly #options: TelegramPollingRuntimeOptions;
   #activePollController: AbortController | null = null;
 
   constructor(
     client: TelegramBotClient,
-    store: Pick<BridgeStore, "channelOffsets" | "pendingPermissions" | "telegramUserAuth">,
+    store: Pick<
+      BridgeStore,
+      "channelOffsets" | "pendingPermissions" | "telegramUserAuth"
+    >,
     options: TelegramPollingServiceOptions
   ) {
     this.#client = client;
@@ -46,7 +57,8 @@ export class TelegramPollingService {
       verificationPasswordHash: options.verificationPasswordHash ?? null,
       ownerUserId: options.ownerUserId ?? null,
       ownerChatId: options.ownerChatId ?? null,
-      pollingTimeoutSeconds: options.pollingTimeoutSeconds ?? DEFAULT_POLLING_TIMEOUT_SECONDS,
+      pollingTimeoutSeconds:
+        options.pollingTimeoutSeconds ?? DEFAULT_POLLING_TIMEOUT_SECONDS,
       offsetChannelKey: options.offsetChannelKey ?? DEFAULT_OFFSET_CHANNEL_KEY,
       callbackReceivedText: callbackDefaults.callbackReceivedText,
       callbackStaleText: callbackDefaults.callbackStaleText
@@ -54,9 +66,13 @@ export class TelegramPollingService {
   }
 
   async pollOnce(
-    onInboundMessage: (envelope: TelegramInboundEnvelope) => Promise<void> | void
+    onInboundMessage: (
+      envelope: TelegramInboundEnvelope
+    ) => Promise<void> | void
   ): Promise<TelegramPollingResult> {
-    const offsetRecord = this.#store.channelOffsets.get(this.#options.offsetChannelKey);
+    const offsetRecord = this.#store.channelOffsets.get(
+      this.#options.offsetChannelKey
+    );
     let currentOffset = offsetRecord?.currentOffset ?? 0;
     const acceptedUpdates: TelegramInboundEnvelope[] = [];
     const ignoredUpdates: TelegramIgnoredUpdate[] = [];

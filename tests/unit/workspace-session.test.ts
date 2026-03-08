@@ -35,9 +35,14 @@ test("initializeNewSessionWorkspace keeps a normalized cwd when the only cwd iss
   assert.equal(result.session.cwd, "/bound-root/child");
   assert.equal(result.session.accessScope, "workspace");
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_not_normalized" && issue.field === "cwd")
+    result.issues.some(
+      (issue) => issue.code === "path_not_normalized" && issue.field === "cwd"
+    )
   );
-  assert.equal(result.issues.some((issue) => issue.field === "requestedCwd"), false);
+  assert.equal(
+    result.issues.some((issue) => issue.field === "requestedCwd"),
+    false
+  );
 });
 
 test("applyCwdChange rejects a cwd outside the allowed directory set", async () => {
@@ -54,7 +59,10 @@ test("applyCwdChange rejects a cwd outside the allowed directory set", async () 
   assert.equal(result.ok, false);
   assert.deepEqual(result.session, session);
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_outside_allowed_set" && issue.field === "cwd")
+    result.issues.some(
+      (issue) =>
+        issue.code === "path_outside_allowed_set" && issue.field === "cwd"
+    )
   );
 });
 
@@ -72,7 +80,9 @@ test("applyCwdChange keeps a normalized cwd when the only cwd issue is non-block
   assert.equal(result.ok, true);
   assert.equal(result.session.cwd, "/workspace/logs");
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_not_normalized" && issue.field === "cwd")
+    result.issues.some(
+      (issue) => issue.code === "path_not_normalized" && issue.field === "cwd"
+    )
   );
 });
 
@@ -108,7 +118,10 @@ test("prepareAddDirConfirmation rejects duplicates already in the allowed set", 
   assert.equal(result.ok, false);
   assert.equal(result.confirmation, undefined);
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_duplicate" && issue.field === "requestedPath")
+    result.issues.some(
+      (issue) =>
+        issue.code === "path_duplicate" && issue.field === "requestedPath"
+    )
   );
 });
 
@@ -122,14 +135,20 @@ test("prepareAddDirConfirmation short-circuits duplicate paths before filesystem
   };
   const inspector = {
     async lstat() {
-      throw new Error("duplicate path should not trigger filesystem inspection");
+      throw new Error(
+        "duplicate path should not trigger filesystem inspection"
+      );
     },
     async realpath() {
-      throw new Error("duplicate path should not trigger filesystem inspection");
+      throw new Error(
+        "duplicate path should not trigger filesystem inspection"
+      );
     }
   };
 
-  const result = await prepareAddDirConfirmation(session, "/workspace", { inspector });
+  const result = await prepareAddDirConfirmation(session, "/workspace", {
+    inspector
+  });
 
   assert.equal(result.ok, false);
   assert.equal(result.confirmation, undefined);
@@ -156,7 +175,10 @@ test("prepareAddDirConfirmation rejects an empty requested path", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.confirmation, undefined);
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_empty" && issue.field === "extraAllowedDirs[0]")
+    result.issues.some(
+      (issue) =>
+        issue.code === "path_empty" && issue.field === "extraAllowedDirs[0]"
+    )
   );
 });
 
@@ -200,6 +222,9 @@ test("confirmAddDir rejects a duplicate confirmation against the current session
   assert.equal(result.ok, false);
   assert.deepEqual(result.session, session);
   assert.ok(
-    result.issues.some((issue) => issue.code === "path_duplicate" && issue.field === "extraAllowedDirs[1]")
+    result.issues.some(
+      (issue) =>
+        issue.code === "path_duplicate" && issue.field === "extraAllowedDirs[1]"
+    )
   );
 });

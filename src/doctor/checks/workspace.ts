@@ -73,7 +73,9 @@ export async function buildWorkspaceCheck(
       }).join(", ")}`
     );
     for (const issue of result.issues) {
-      details.push(`session=${session.sessionId} | ${issue.field} | ${issue.message}${issue.detail ? ` | ${issue.detail}` : ""}`);
+      details.push(
+        `session=${session.sessionId} | ${issue.field} | ${issue.message}${issue.detail ? ` | ${issue.detail}` : ""}`
+      );
     }
   }
 
@@ -96,11 +98,18 @@ export async function buildWorkspaceCheck(
   };
 }
 
-function getWorkspaceStatus(issues: readonly WorkspaceIssue[]): DoctorCheckStatus {
-  return issues.some((issue) => !WARNING_ISSUE_CODES.has(issue.code)) ? "error" : "warning";
+function getWorkspaceStatus(
+  issues: readonly WorkspaceIssue[]
+): DoctorCheckStatus {
+  return issues.some((issue) => !WARNING_ISSUE_CODES.has(issue.code))
+    ? "error"
+    : "warning";
 }
 
-function maxStatus(left: DoctorCheckStatus, right: DoctorCheckStatus): DoctorCheckStatus {
+function maxStatus(
+  left: DoctorCheckStatus,
+  right: DoctorCheckStatus
+): DoctorCheckStatus {
   const weights: Record<DoctorCheckStatus, number> = {
     ok: 0,
     skipped: 0,

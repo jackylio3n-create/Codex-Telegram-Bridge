@@ -6,7 +6,9 @@ import test from "node:test";
 import { createLogger } from "../../src/logger/index.js";
 
 test("createLogger filters records below the configured level before writing", async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-logger-"));
+  const tempDir = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-logger-")
+  );
   const filePath = join(tempDir, "bridge.log");
   const logger = createLogger({
     level: "warn",

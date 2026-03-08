@@ -26,7 +26,11 @@ export async function requestAddDirCommand(
   requestedPath: string,
   options: WorkspaceMutationOptions = {}
 ): Promise<AddDirCommandRequestResult> {
-  const result = await prepareAddDirConfirmation(session, requestedPath, options);
+  const result = await prepareAddDirConfirmation(
+    session,
+    requestedPath,
+    options
+  );
   if (!result.ok || !result.confirmation) {
     return {
       status: "rejected",

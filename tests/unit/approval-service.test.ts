@@ -18,11 +18,14 @@ class InMemoryPendingPermissionsRepository {
     return this.#records.get(permissionId) ?? null;
   }
 
-  list(filter: PendingPermissionFilter = {}): readonly PendingPermissionRecord[] {
+  list(
+    filter: PendingPermissionFilter = {}
+  ): readonly PendingPermissionRecord[] {
     this.listCalls += 1;
     return [...this.#records.values()].filter((record) => {
       return (
-        (filter.sessionId === undefined || record.sessionId === filter.sessionId) &&
+        (filter.sessionId === undefined ||
+          record.sessionId === filter.sessionId) &&
         (filter.runId === undefined || record.runId === filter.runId) &&
         (filter.chatId === undefined || record.chatId === filter.chatId) &&
         (filter.userId === undefined || record.userId === filter.userId) &&
@@ -56,7 +59,10 @@ class InMemoryPendingPermissionsRepository {
     const expiredPermissionIds: string[] = [];
 
     for (const [permissionId, record] of this.#records.entries()) {
-      if (record.resolved || Date.parse(record.expiresAt) >= Date.parse(before)) {
+      if (
+        record.resolved ||
+        Date.parse(record.expiresAt) >= Date.parse(before)
+      ) {
         continue;
       }
 

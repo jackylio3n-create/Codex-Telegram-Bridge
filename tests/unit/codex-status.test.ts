@@ -3,16 +3,21 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { formatCodexAccountStatus, readCodexAccountStatus } from "../../src/runtime/codex/status.js";
+import {
+  formatCodexAccountStatus,
+  readCodexAccountStatus
+} from "../../src/runtime/codex/status.js";
 
 test("readCodexAccountStatus reads model, reasoning effort, and latest known rate limits from codex home", async () => {
-  const codexHome = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-codex-home-"));
+  const codexHome = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-codex-home-")
+  );
 
   try {
-    await writeFile(join(codexHome, "config.toml"), [
-      "model = \"gpt-5.4\"",
-      "model_reasoning_effort = \"xhigh\""
-    ].join("\n"));
+    await writeFile(
+      join(codexHome, "config.toml"),
+      ['model = "gpt-5.4"', 'model_reasoning_effort = "xhigh"'].join("\n")
+    );
 
     const sessionsDir = join(codexHome, "sessions", "2026", "03", "07");
     await mkdir(sessionsDir, { recursive: true });

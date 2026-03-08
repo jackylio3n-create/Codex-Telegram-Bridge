@@ -3,7 +3,11 @@ import type { PendingPermissionRecord } from "../../store/types.js";
 import type { TelegramInlineKeyboardMarkup } from "../../transport/telegram/types.js";
 
 export type ApprovalDecision = "approve" | "deny";
-export type ApprovalResolutionStatus = "approved" | "denied" | "stale" | "missing";
+export type ApprovalResolutionStatus =
+  | "approved"
+  | "denied"
+  | "stale"
+  | "missing";
 export type ApprovalStaleReason =
   | "already_resolved"
   | "expired"

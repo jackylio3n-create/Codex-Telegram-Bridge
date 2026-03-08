@@ -6,10 +6,16 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { AppConfig } from "../../src/config/index.js";
 import { createLogger } from "../../src/logger/index.js";
-import { BridgeRuntime, readBridgeRuntimeState } from "../../src/runtime/bridge/index.js";
+import {
+  BridgeRuntime,
+  readBridgeRuntimeState
+} from "../../src/runtime/bridge/index.js";
 import { hashVerificationPassword } from "../../src/security/verification-password.js";
 import { createBridgeStore, type BridgeStore } from "../../src/store/index.js";
-import type { TelegramMessage, TelegramUpdate } from "../../src/transport/telegram/types.js";
+import type {
+  TelegramMessage,
+  TelegramUpdate
+} from "../../src/transport/telegram/types.js";
 
 const fakeCodexPath = join(
   import.meta.dirname,
@@ -17,211 +23,338 @@ const fakeCodexPath = join(
   process.platform === "win32" ? "fake-codex.ps1" : "fake-codex.sh"
 );
 
-test("bridge runtime processes a new session and a text run end-to-end", {
-  skip: process.platform === "win32" ? "Requires Linux-style workspace paths." : false
-}, async () => {
-  const harness = await createHarness();
+test(
+  "bridge runtime processes a new session and a text run end-to-end",
+  {
+    skip:
+      process.platform === "win32"
+        ? "Requires Linux-style workspace paths."
+        : false
+  },
+  async () => {
+    const harness = await createHarness();
 
-  try {
-    harness.api.pushUpdate(createTextUpdate(1, "/new"));
-    harness.api.pushUpdate(createTextUpdate(2, "hello from telegram"));
+    try {
+      harness.api.pushUpdate(createTextUpdate(1, "/new"));
+      harness.api.pushUpdate(createTextUpdate(2, "hello from telegram"));
 
-    const runtime = await harness.createRuntime();
-    const runPromise = runtime.runUntilStopped();
+      const runtime = await harness.createRuntime();
+      const runPromise = runtime.runUntilStopped();
 
-    await waitFor(() => harness.api.editedMessages.some((entry) => entry.text.includes("Default answer")));
-    await runtime.stop();
-    await runPromise;
-
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("Created and bound session")));
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("Running Codex")));
-    assert.ok(harness.api.editedMessages.some((entry) => entry.text.includes("Default answer")));
-    assert.equal(harness.store.sessions.listOverview()[0]?.runState, "idle");
-
-     const state = await readBridgeRuntimeState(harness.config.paths.stateFilePath);
-     const sessionId = harness.store.sessions.listOverview()[0]?.sessionId;
-     const auditRows = sessionId ? harness.store.auditLogs.list({ sessionId }) : [];
-     const userInput = auditRows.find((entry) => entry.eventType === "user_input");
-     const agentText = auditRows.find((entry) => entry.eventType === "agent_text");
-
-     assert.equal(state?.status, "stopped");
-     assert.equal(state?.activeRunCount, 0);
-     assert.equal(state?.lastEvent?.includes(":") ?? false, false);
-     assert.deepEqual(userInput?.payload, {
-       contentType: "text",
-       messageLength: "hello from telegram".length
-     });
-     assert.deepEqual(agentText?.payload, {
-       messageLength: "Default answer".length
-     });
-   } finally {
-     await harness.dispose();
-   }
-});
-
-test("bridge runtime cancels an active run after /stop", {
-  skip: process.platform === "win32" ? "Requires Linux-style workspace paths." : false
-}, async () => {
-  const harness = await createHarness();
-  let runtime: BridgeRuntime | null = null;
-  let runPromise: Promise<void> | null = null;
-  try {
-    harness.api.pushUpdate(createTextUpdate(1, "/new"));
-    harness.api.pushUpdate(createTextUpdate(2, "start a long task"));
-    harness.api.pushUpdate(createTextUpdate(3, "/stop"));
-
-    runtime = await harness.createRuntime("cancel");
-    runPromise = runtime.runUntilStopped();
-
-    await waitFor(() => {
-      return harness.api.sentMessages.some((entry) => entry.text.includes("Cancellation requested"))
-        && harness.api.editedMessages.some((entry) => {
-          return entry.text.includes("Run interrupted") || entry.text.includes("Run cancelled");
-        });
-    });
-    await runtime.stop();
-    await runPromise;
-
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("Cancellation requested")));
-    assert.ok(harness.api.editedMessages.some((entry) => {
-      return entry.text.includes("Run interrupted") || entry.text.includes("Run cancelled");
-    }));
-    assert.equal(harness.store.sessions.listOverview()[0]?.runState, "cancelled");
-  } finally {
-    if (runtime) {
+      await waitFor(() =>
+        harness.api.editedMessages.some((entry) =>
+          entry.text.includes("Default answer")
+        )
+      );
       await runtime.stop();
+      await runPromise;
+
+      assert.ok(
+        harness.api.sentMessages.some((entry) =>
+          entry.text.includes("Created and bound session")
+        )
+      );
+      assert.ok(
+        harness.api.sentMessages.some((entry) =>
+          entry.text.includes("Running Codex")
+        )
+      );
+      assert.ok(
+        harness.api.editedMessages.some((entry) =>
+          entry.text.includes("Default answer")
+        )
+      );
+      assert.equal(harness.store.sessions.listOverview()[0]?.runState, "idle");
+
+      const state = await readBridgeRuntimeState(
+        harness.config.paths.stateFilePath
+      );
+      const sessionId = harness.store.sessions.listOverview()[0]?.sessionId;
+      const auditRows = sessionId
+        ? harness.store.auditLogs.list({ sessionId })
+        : [];
+      const userInput = auditRows.find(
+        (entry) => entry.eventType === "user_input"
+      );
+      const agentText = auditRows.find(
+        (entry) => entry.eventType === "agent_text"
+      );
+
+      assert.equal(state?.status, "stopped");
+      assert.equal(state?.activeRunCount, 0);
+      assert.equal(state?.lastEvent?.includes(":") ?? false, false);
+      assert.deepEqual(userInput?.payload, {
+        contentType: "text",
+        messageLength: "hello from telegram".length
+      });
+      assert.deepEqual(agentText?.payload, {
+        messageLength: "Default answer".length
+      });
+    } finally {
+      await harness.dispose();
     }
-    if (runPromise) {
-      await runPromise.catch(() => undefined);
-    }
-    await harness.dispose();
   }
-});
+);
 
-test("bridge runtime downloads image input and cleans up temp files after the run", {
-  skip: process.platform === "win32" ? "Requires Linux-style workspace paths." : false
-}, async () => {
-  const harness = await createHarness();
+test(
+  "bridge runtime cancels an active run after /stop",
+  {
+    skip:
+      process.platform === "win32"
+        ? "Requires Linux-style workspace paths."
+        : false
+  },
+  async () => {
+    const harness = await createHarness();
+    let runtime: BridgeRuntime | null = null;
+    let runPromise: Promise<void> | null = null;
+    try {
+      harness.api.pushUpdate(createTextUpdate(1, "/new"));
+      harness.api.pushUpdate(createTextUpdate(2, "start a long task"));
+      harness.api.pushUpdate(createTextUpdate(3, "/stop"));
 
-  try {
-    harness.api.pushUpdate(createTextUpdate(1, "/new"));
-    harness.api.pushUpdate({
-      update_id: 2,
-      message: {
-        message_id: 2,
-        date: 1_772_766_401,
-        caption: "inspect this image",
-        photo: [
-          {
-            file_id: "photo-small",
-            width: 64,
-            height: 64,
-            file_size: 100
-          },
-          {
-            file_id: "photo-large",
-            width: 128,
-            height: 128,
-            file_size: 200
-          }
-        ],
-        chat: {
-          id: 1,
-          type: "private"
-        },
-        from: {
-          id: 1,
-          is_bot: false,
-          first_name: "Tester"
-        }
+      runtime = await harness.createRuntime("cancel");
+      runPromise = runtime.runUntilStopped();
+
+      await waitFor(() => {
+        return (
+          harness.api.sentMessages.some((entry) =>
+            entry.text.includes("Cancellation requested")
+          ) &&
+          harness.api.editedMessages.some((entry) => {
+            return (
+              entry.text.includes("Run interrupted") ||
+              entry.text.includes("Run cancelled")
+            );
+          })
+        );
+      });
+      await runtime.stop();
+      await runPromise;
+
+      assert.ok(
+        harness.api.sentMessages.some((entry) =>
+          entry.text.includes("Cancellation requested")
+        )
+      );
+      assert.ok(
+        harness.api.editedMessages.some((entry) => {
+          return (
+            entry.text.includes("Run interrupted") ||
+            entry.text.includes("Run cancelled")
+          );
+        })
+      );
+      assert.equal(
+        harness.store.sessions.listOverview()[0]?.runState,
+        "cancelled"
+      );
+    } finally {
+      if (runtime) {
+        await runtime.stop();
       }
-    });
-
-    const runtime = await harness.createRuntime();
-    const runPromise = runtime.runUntilStopped();
-
-    await waitFor(() => harness.api.editedMessages.some((entry) => entry.text.includes("Default answer")));
-    await runtime.stop();
-    await runPromise;
-
-    assert.equal(harness.api.downloadedFiles.length, 1);
-    const tempEntries = await readdir(harness.config.paths.tempDir);
-    assert.equal(tempEntries.filter((entry) => entry.startsWith("telegram-media-")).length, 0);
-  } finally {
-    await harness.dispose();
+      if (runPromise) {
+        await runPromise.catch(() => undefined);
+      }
+      await harness.dispose();
+    }
   }
-});
+);
 
-test("bridge runtime stores runtime approvals and resumes after approval", {
-  skip: process.platform === "win32" ? "Requires Linux-style workspace paths." : false
-}, async () => {
-  const harness = await createHarness();
-  try {
-    harness.api.pushUpdate(createTextUpdate(1, "/new"));
-    harness.api.pushUpdate(createTextUpdate(2, "run something that needs approval"));
+test(
+  "bridge runtime downloads image input and cleans up temp files after the run",
+  {
+    skip:
+      process.platform === "win32"
+        ? "Requires Linux-style workspace paths."
+        : false
+  },
+  async () => {
+    const harness = await createHarness();
 
-    const runtime = await harness.createRuntime("approval");
-    const runPromise = runtime.runUntilStopped();
+    try {
+      harness.api.pushUpdate(createTextUpdate(1, "/new"));
+      harness.api.pushUpdate({
+        update_id: 2,
+        message: {
+          message_id: 2,
+          date: 1_772_766_401,
+          caption: "inspect this image",
+          photo: [
+            {
+              file_id: "photo-small",
+              width: 64,
+              height: 64,
+              file_size: 100
+            },
+            {
+              file_id: "photo-large",
+              width: 128,
+              height: 128,
+              file_size: 200
+            }
+          ],
+          chat: {
+            id: 1,
+            type: "private"
+          },
+          from: {
+            id: 1,
+            is_bot: false,
+            first_name: "Tester"
+          }
+        }
+      });
 
-    await waitFor(() => harness.store.pendingPermissions.list({ resolved: false }).length === 1);
-    const permission = harness.store.pendingPermissions.list({ resolved: false })[0];
-    assert.ok(permission);
-    assert.equal(permission.summary, "exec_command approval request");
+      const runtime = await harness.createRuntime();
+      const runPromise = runtime.runUntilStopped();
 
-    const approvalMessage = harness.api.sentMessages.find((entry) => entry.text.includes("Codex needs approval"));
-    assert.ok(approvalMessage);
-    assert.match(approvalMessage.text, /git status/);
+      await waitFor(() =>
+        harness.api.editedMessages.some((entry) =>
+          entry.text.includes("Default answer")
+        )
+      );
+      await runtime.stop();
+      await runPromise;
 
-    harness.api.pushUpdate(createApprovalCallbackUpdate(3, approvalMessage.messageId, permission.permissionId, "approve"));
-
-    await waitFor(() => harness.api.editedMessages.some((entry) => entry.text.includes("Approved answer")));
-    await runtime.stop();
-    await runPromise;
-
-    assert.equal(harness.store.pendingPermissions.get(permission.permissionId)?.resolution, "approved");
-    assert.equal(harness.store.sessions.listOverview()[0]?.runState, "idle");
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("Approval granted")));
-    assert.ok(harness.api.editedMessages.some((entry) => entry.text.includes("Approved answer")));
-  } finally {
-    await harness.dispose();
+      assert.equal(harness.api.downloadedFiles.length, 1);
+      const tempEntries = await readdir(harness.config.paths.tempDir);
+      assert.equal(
+        tempEntries.filter((entry) => entry.startsWith("telegram-media-"))
+          .length,
+        0
+      );
+    } finally {
+      await harness.dispose();
+    }
   }
-});
+);
 
-test("bridge runtime stop does not access a closed owned store during shutdown", {
-  skip: process.platform === "win32" ? "Requires Linux-style workspace paths." : false
-}, async () => {
-  const harness = await createHarness();
+test(
+  "bridge runtime stores runtime approvals and resumes after approval",
+  {
+    skip:
+      process.platform === "win32"
+        ? "Requires Linux-style workspace paths."
+        : false
+  },
+  async () => {
+    const harness = await createHarness();
+    try {
+      harness.api.pushUpdate(createTextUpdate(1, "/new"));
+      harness.api.pushUpdate(
+        createTextUpdate(2, "run something that needs approval")
+      );
 
-  try {
-    harness.api.pushUpdate(createTextUpdate(1, "/new"));
+      const runtime = await harness.createRuntime("approval");
+      const runPromise = runtime.runUntilStopped();
 
-    const runtime = await BridgeRuntime.create({
-      config: harness.config,
-      codexExecutablePath: fakeCodexPath,
-      telegramFetchImplementation: harness.api.fetch.bind(harness.api),
-      logger: createLogger({
-        name: harness.config.appName,
-        level: "error",
-        console: false,
-        filePath: harness.config.paths.logFilePath,
-        redactValues: [
-          harness.config.telegramBotToken,
-          ...(harness.config.verificationPasswordHash ? [harness.config.verificationPasswordHash] : [])
-        ]
-      })
-    });
+      await waitFor(
+        () =>
+          harness.store.pendingPermissions.list({ resolved: false }).length ===
+          1
+      );
+      const permission = harness.store.pendingPermissions.list({
+        resolved: false
+      })[0];
+      assert.ok(permission);
+      assert.equal(permission.summary, "exec_command approval request");
 
-    const runPromise = runtime.runUntilStopped();
-    await waitFor(() => harness.api.sentMessages.some((entry) => entry.text.includes("Created and bound session")));
-    await runtime.stop();
-    await runPromise;
+      const approvalMessage = harness.api.sentMessages.find((entry) =>
+        entry.text.includes("Codex needs approval")
+      );
+      assert.ok(approvalMessage);
+      assert.match(approvalMessage.text, /git status/);
 
-    const state = await readBridgeRuntimeState(harness.config.paths.stateFilePath);
-    assert.equal(state?.status, "stopped");
-  } finally {
-    await harness.dispose();
+      harness.api.pushUpdate(
+        createApprovalCallbackUpdate(
+          3,
+          approvalMessage.messageId,
+          permission.permissionId,
+          "approve"
+        )
+      );
+
+      await waitFor(() =>
+        harness.api.editedMessages.some((entry) =>
+          entry.text.includes("Approved answer")
+        )
+      );
+      await runtime.stop();
+      await runPromise;
+
+      assert.equal(
+        harness.store.pendingPermissions.get(permission.permissionId)
+          ?.resolution,
+        "approved"
+      );
+      assert.equal(harness.store.sessions.listOverview()[0]?.runState, "idle");
+      assert.ok(
+        harness.api.sentMessages.some((entry) =>
+          entry.text.includes("Approval granted")
+        )
+      );
+      assert.ok(
+        harness.api.editedMessages.some((entry) =>
+          entry.text.includes("Approved answer")
+        )
+      );
+    } finally {
+      await harness.dispose();
+    }
   }
-});
+);
+
+test(
+  "bridge runtime stop does not access a closed owned store during shutdown",
+  {
+    skip:
+      process.platform === "win32"
+        ? "Requires Linux-style workspace paths."
+        : false
+  },
+  async () => {
+    const harness = await createHarness();
+
+    try {
+      harness.api.pushUpdate(createTextUpdate(1, "/new"));
+
+      const runtime = await BridgeRuntime.create({
+        config: harness.config,
+        codexExecutablePath: fakeCodexPath,
+        telegramFetchImplementation: harness.api.fetch.bind(harness.api),
+        logger: createLogger({
+          name: harness.config.appName,
+          level: "error",
+          console: false,
+          filePath: harness.config.paths.logFilePath,
+          redactValues: [
+            harness.config.telegramBotToken,
+            ...(harness.config.verificationPasswordHash
+              ? [harness.config.verificationPasswordHash]
+              : [])
+          ]
+        })
+      });
+
+      const runPromise = runtime.runUntilStopped();
+      await waitFor(() =>
+        harness.api.sentMessages.some((entry) =>
+          entry.text.includes("Created and bound session")
+        )
+      );
+      await runtime.stop();
+      await runPromise;
+
+      const state = await readBridgeRuntimeState(
+        harness.config.paths.stateFilePath
+      );
+      assert.equal(state?.status, "stopped");
+    } finally {
+      await harness.dispose();
+    }
+  }
+);
 
 test("bridge runtime requires first-contact verification and bans after five wrong passwords", async () => {
   const harness = await createHarness({
@@ -265,18 +398,37 @@ test("bridge runtime requires first-contact verification and bans after five wro
     const runtime = await harness.createRuntime();
     const runPromise = runtime.runUntilStopped();
 
-    await waitFor(() => harness.api.sentMessages.some((entry) => entry.text.includes("blocked locally")));
+    await waitFor(() =>
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("blocked locally")
+      )
+    );
     await runtime.stop();
     await runPromise;
 
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("欢迎使用")));
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("Incorrect verification password")));
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("blocked locally")));
+    assert.ok(
+      harness.api.sentMessages.some((entry) => entry.text.includes("欢迎使用"))
+    );
+    assert.ok(
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("Incorrect verification password")
+      )
+    );
+    assert.ok(
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("blocked locally")
+      )
+    );
     assert.equal(harness.store.telegramUserAuth.get("1")?.failedAttempts, 5);
     assert.ok(harness.store.telegramUserAuth.get("1")?.bannedAt);
     assert.equal(harness.store.sessions.listOverview().length, 0);
     assert.equal(harness.api.downloadedFiles.length, 0);
-    assert.equal(harness.api.sentMessages.some((entry) => entry.text.includes("Created and bound session")), false);
+    assert.equal(
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("Created and bound session")
+      ),
+      false
+    );
   } finally {
     await harness.dispose();
   }
@@ -320,14 +472,30 @@ test("bridge runtime blocks all bot usage until a verified user chooses a prompt
     runtime = await harness.createRuntime();
     runPromise = runtime.runUntilStopped();
 
-    await waitFor(() => harness.api.sentMessages.some((entry) => entry.text.includes("choose your prompt language")));
+    await waitFor(() =>
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("choose your prompt language")
+      )
+    );
     await runtime.stop();
     await runPromise;
 
-    assert.equal(harness.store.telegramUserAuth.get("1")?.preferredLanguage, null);
+    assert.equal(
+      harness.store.telegramUserAuth.get("1")?.preferredLanguage,
+      null
+    );
     assert.equal(harness.api.downloadedFiles.length, 0);
-    assert.ok(harness.api.sentMessages.some((entry) => entry.text.includes("choose your prompt language")));
-    assert.equal(harness.api.sentMessages.some((entry) => entry.text.includes("Created and bound session")), false);
+    assert.ok(
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("choose your prompt language")
+      )
+    );
+    assert.equal(
+      harness.api.sentMessages.some((entry) =>
+        entry.text.includes("Created and bound session")
+      ),
+      false
+    );
   } finally {
     if (runtime) {
       await runtime.stop();
@@ -346,16 +514,20 @@ async function createHarness(): Promise<{
   createRuntime(scenario?: string): Promise<BridgeRuntime>;
   dispose(): Promise<void>;
 }>;
-async function createHarness(options: {
-  readonly verificationPasswordHash?: string | null;
-} = {}): Promise<{
+async function createHarness(
+  options: {
+    readonly verificationPasswordHash?: string | null;
+  } = {}
+): Promise<{
   readonly config: AppConfig;
   readonly store: BridgeStore;
   readonly api: FakeTelegramApi;
   createRuntime(scenario?: string): Promise<BridgeRuntime>;
   dispose(): Promise<void>;
 }> {
-  const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-runtime-"));
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), "codex-telegram-bridge-runtime-")
+  );
   const appHome = join(tempRoot, "app");
   await mkdir(appHome, { recursive: true });
   const workspaceRoot = join(tempRoot, "workspaces", "main");
@@ -428,7 +600,9 @@ async function createHarness(options: {
           filePath: config.paths.logFilePath,
           redactValues: [
             config.telegramBotToken,
-            ...(config.verificationPasswordHash ? [config.verificationPasswordHash] : [])
+            ...(config.verificationPasswordHash
+              ? [config.verificationPasswordHash]
+              : [])
           ]
         })
       });
@@ -443,8 +617,16 @@ async function createHarness(options: {
 
 class FakeTelegramApi {
   readonly updates: TelegramUpdate[] = [];
-  readonly sentMessages: Array<{ readonly chatId: string; readonly text: string; readonly messageId: number }> = [];
-  readonly editedMessages: Array<{ readonly chatId: string; readonly text: string; readonly messageId: number }> = [];
+  readonly sentMessages: Array<{
+    readonly chatId: string;
+    readonly text: string;
+    readonly messageId: number;
+  }> = [];
+  readonly editedMessages: Array<{
+    readonly chatId: string;
+    readonly text: string;
+    readonly messageId: number;
+  }> = [];
   readonly downloadedFiles: string[] = [];
   #nextMessageId = 500;
 
@@ -452,8 +634,16 @@ class FakeTelegramApi {
     this.updates.push(update);
   }
 
-  async fetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  async fetch(
+    input: string | URL | Request,
+    init?: RequestInit
+  ): Promise<Response> {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     if (url.includes("/file/bot")) {
       const filePath = url.slice(url.lastIndexOf("/") + 1);
       this.downloadedFiles.push(filePath);
@@ -461,7 +651,9 @@ class FakeTelegramApi {
     }
 
     const method = url.slice(url.lastIndexOf("/") + 1);
-    const payload = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+    const payload = init?.body
+      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+      : {};
 
     switch (method) {
       case "getUpdates":
@@ -476,7 +668,10 @@ class FakeTelegramApi {
         return this.#ok(message);
       }
       case "editMessageText": {
-        const message = this.#createMessage(payload, Number(payload.message_id));
+        const message = this.#createMessage(
+          payload,
+          Number(payload.message_id)
+        );
         this.editedMessages.push({
           chatId: String(payload.chat_id),
           text: String(payload.text),
@@ -497,7 +692,10 @@ class FakeTelegramApi {
     }
   }
 
-  #createMessage(payload: Record<string, unknown>, explicitMessageId?: number): TelegramMessage {
+  #createMessage(
+    payload: Record<string, unknown>,
+    explicitMessageId?: number
+  ): TelegramMessage {
     return {
       message_id: explicitMessageId ?? this.#nextMessageId++,
       date: 1_772_766_400,
@@ -573,8 +771,10 @@ function createApprovalCallbackUpdate(
   };
 }
 
-
-async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 10_000
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) {

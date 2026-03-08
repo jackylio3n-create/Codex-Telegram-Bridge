@@ -30,7 +30,9 @@ export function buildOffsetsCheck(
   const details: string[] = [`Updated at: ${row.updatedAt}.`];
 
   if (row.currentOffset < 0 || row.previousOffset < 0) {
-    details.push(`current_offset=${row.currentOffset}, previous_offset=${row.previousOffset}`);
+    details.push(
+      `current_offset=${row.currentOffset}, previous_offset=${row.previousOffset}`
+    );
     return {
       id: "offsets",
       label: "telegram offsets",
@@ -41,7 +43,9 @@ export function buildOffsetsCheck(
   }
 
   if (row.currentOffset < row.previousOffset) {
-    details.push(`current_offset=${row.currentOffset}, previous_offset=${row.previousOffset}`);
+    details.push(
+      `current_offset=${row.currentOffset}, previous_offset=${row.previousOffset}`
+    );
     return {
       id: "offsets",
       label: "telegram offsets",
@@ -52,7 +56,9 @@ export function buildOffsetsCheck(
   }
 
   const jump = row.currentOffset - row.previousOffset;
-  details.push(`current_offset=${row.currentOffset}, previous_offset=${row.previousOffset}, jump=${jump}`);
+  details.push(
+    `current_offset=${row.currentOffset}, previous_offset=${row.previousOffset}, jump=${jump}`
+  );
 
   if (jump > suspiciousJumpThreshold) {
     details.push(`Threshold: ${suspiciousJumpThreshold}.`);

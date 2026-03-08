@@ -4,8 +4,16 @@ import { TelegramBotClient } from "../../src/transport/telegram/client.js";
 import { TelegramPreviewPublisher } from "../../src/transport/telegram/preview.js";
 
 function createFakeTelegramFetch() {
-  const sentMessages: Array<{ readonly chatId: string; readonly text: string; readonly messageId: number }> = [];
-  const editedMessages: Array<{ readonly chatId: string; readonly text: string; readonly messageId: number }> = [];
+  const sentMessages: Array<{
+    readonly chatId: string;
+    readonly text: string;
+    readonly messageId: number;
+  }> = [];
+  const editedMessages: Array<{
+    readonly chatId: string;
+    readonly text: string;
+    readonly messageId: number;
+  }> = [];
   let nextMessageId = 100;
 
   const ok = (result: unknown) =>
@@ -17,9 +25,16 @@ function createFakeTelegramFetch() {
     });
 
   const fetchImplementation: typeof fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     const method = url.slice(url.lastIndexOf("/") + 1);
-    const payload = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+    const payload = init?.body
+      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+      : {};
 
     switch (method) {
       case "sendMessage": {
@@ -86,8 +101,14 @@ test("finalizePreview does not resend when the preview already matches the final
 
   assert.equal(fakeFetch.sentMessages.length, 1);
   assert.equal(fakeFetch.editedMessages.length, 1);
-  assert.deepEqual(fakeFetch.sentMessages.map((message) => message.text), ["Running Codex..."]);
-  assert.deepEqual(fakeFetch.editedMessages.map((message) => message.text), ["hello"]);
+  assert.deepEqual(
+    fakeFetch.sentMessages.map((message) => message.text),
+    ["Running Codex..."]
+  );
+  assert.deepEqual(
+    fakeFetch.editedMessages.map((message) => message.text),
+    ["hello"]
+  );
   assert.deepEqual(result.sentMessageIds, [100]);
 });
 
@@ -104,8 +125,14 @@ test("updatePreview skips editMessageText when the preview text is unchanged", a
   });
 
   const initialHandle = await publisher.beginPreview("123", "Running Codex...");
-  const onceUpdatedHandle = await publisher.updatePreview(initialHandle, "hello");
-  const twiceUpdatedHandle = await publisher.updatePreview(onceUpdatedHandle, "hello");
+  const onceUpdatedHandle = await publisher.updatePreview(
+    initialHandle,
+    "hello"
+  );
+  const twiceUpdatedHandle = await publisher.updatePreview(
+    onceUpdatedHandle,
+    "hello"
+  );
 
   assert.equal(fakeFetch.sentMessages.length, 1);
   assert.equal(fakeFetch.editedMessages.length, 1);

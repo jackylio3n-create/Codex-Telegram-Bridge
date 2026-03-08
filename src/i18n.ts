@@ -8,6 +8,10 @@ export function zhEnInline(zh: string, en: string): string {
   return `${zh} / ${en}`;
 }
 
-export function selectText(language: PromptLanguage, zh: string, en: string): string {
+export function selectText(
+  language: PromptLanguage,
+  zh: string,
+  en: string
+): string {
   return language === "zh" ? zh : en;
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { BridgeDatabase } from "./database.js";
+import type { BridgeDatabase } from "./database.js";
 import type { AppliedMigrationRecord } from "./types.js";
 
 export interface MigrationDefinition {
@@ -61,7 +61,11 @@ export async function loadMigrationDefinitions(
     });
   }
 
-  definitions.sort((left, right) => left.version - right.version || left.filename.localeCompare(right.filename));
+  definitions.sort(
+    (left, right) =>
+      left.version - right.version ||
+      left.filename.localeCompare(right.filename)
+  );
   return definitions;
 }
 
@@ -71,9 +75,13 @@ export async function applyMigrations(
 ): Promise<ApplyMigrationsResult> {
   ensureMigrationsTable(database);
 
-  const definitions = await loadMigrationDefinitions(options.migrationsDirectory);
+  const definitions = await loadMigrationDefinitions(
+    options.migrationsDirectory
+  );
   const appliedRecords = new Map(
-    listAppliedMigrations(database).map((record) => [record.migrationId, record] as const)
+    listAppliedMigrations(database).map(
+      (record) => [record.migrationId, record] as const
+    )
   );
 
   const applied: AppliedMigrationRecord[] = [];
@@ -103,16 +111,18 @@ export async function applyMigrations(
 
     database.withTransaction(() => {
       database.exec(definition.sql);
-      database.prepare(
-        `INSERT INTO migrations (migration_id, version, name, checksum, applied_at)
+      database
+        .prepare(
+          `INSERT INTO migrations (migration_id, version, name, checksum, applied_at)
          VALUES (?, ?, ?, ?, ?)`
-      ).run(
-        record.migrationId,
-        record.version,
-        record.name,
-        record.checksum,
-        record.appliedAt
-      );
+        )
+        .run(
+          record.migrationId,
+          record.version,
+          record.name,
+          record.checksum,
+          record.appliedAt
+        );
     });
 
     applied.push(record);
@@ -125,13 +135,17 @@ export async function applyMigrations(
   };
 }
 
-export function listAppliedMigrations(database: BridgeDatabase): readonly AppliedMigrationRecord[] {
+export function listAppliedMigrations(
+  database: BridgeDatabase
+): readonly AppliedMigrationRecord[] {
   ensureMigrationsTable(database);
-  const rows = database.prepare(
-    `SELECT migration_id, version, name, checksum, applied_at
+  const rows = database
+    .prepare(
+      `SELECT migration_id, version, name, checksum, applied_at
      FROM migrations
      ORDER BY version ASC, migration_id ASC`
-  ).all() as ReadonlyArray<Record<string, unknown>>;
+    )
+    .all() as ReadonlyArray<Record<string, unknown>>;
 
   return rows.map((row) => ({
     migrationId: toStringValue(row.migration_id),
@@ -154,12 +168,17 @@ function ensureMigrationsTable(database: BridgeDatabase): void {
   `);
 }
 
-function resolveMigrationsDirectory(migrationsDirectory?: string | URL): string {
+function resolveMigrationsDirectory(
+  migrationsDirectory?: string | URL
+): string {
   if (migrationsDirectory instanceof URL) {
     return fileURLToPath(migrationsDirectory);
   }
 
-  if (typeof migrationsDirectory === "string" && migrationsDirectory.trim() !== "") {
+  if (
+    typeof migrationsDirectory === "string" &&
+    migrationsDirectory.trim() !== ""
+  ) {
     return migrationsDirectory;
   }
 

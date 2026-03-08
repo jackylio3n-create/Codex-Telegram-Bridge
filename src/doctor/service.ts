@@ -10,11 +10,18 @@ import { buildRunsCheck } from "./checks/runs.js";
 import { buildStorageCheck } from "./checks/storage.js";
 import { buildTelegramCheck } from "./checks/telegram.js";
 import { buildWorkspaceCheck } from "./checks/workspace.js";
-import type { DoctorCheck, DoctorReport, DoctorRunOptions, DoctorSummary } from "./types.js";
+import type {
+  DoctorCheck,
+  DoctorReport,
+  DoctorRunOptions,
+  DoctorSummary
+} from "./types.js";
 
 const DEFAULT_OFFSET_CHANNEL_KEY = "telegram:getUpdates";
 
-export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorReport> {
+export async function runDoctor(
+  options: DoctorRunOptions = {}
+): Promise<DoctorReport> {
   const now = options.clock?.() ?? new Date();
   const { config, issues: configIssues } = loadAppConfig();
   const startupIssues = await validateStartupEnvironment(config, {
@@ -35,7 +42,10 @@ export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorR
   try {
     const checks: DoctorCheck[] = [
       ...buildConfigChecks(configIssues, startupIssues),
-      await buildDaemonCheck(config.paths.pidFilePath, config.paths.stateFilePath),
+      await buildDaemonCheck(
+        config.paths.pidFilePath,
+        config.paths.stateFilePath
+      ),
       buildStorageCheck(store, storeError),
       await buildTelegramCheck(config.telegramBotToken),
       await buildCodexCheck(),
@@ -95,7 +105,9 @@ function summarizeChecks(checks: readonly DoctorCheck[]): DoctorSummary {
   };
 }
 
-function hasErrors(issues: readonly { readonly severity: "error" | "warning" }[]): boolean {
+function hasErrors(
+  issues: readonly { readonly severity: "error" | "warning" }[]
+): boolean {
   return issues.some((issue) => issue.severity === "error");
 }
 
