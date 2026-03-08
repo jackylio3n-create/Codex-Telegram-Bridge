@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 SERVICE_FILE="/etc/systemd/system/codex-telegram-bridge.service"
 
 RECONFIGURE=0
@@ -40,7 +40,7 @@ trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/install-ubuntu.sh [options]
+Usage: ./scripts/deploy/install-ubuntu.sh [options]
 
 Options:
   --reconfigure             Prompt and rewrite the env file even if it already exists.
@@ -294,7 +294,7 @@ Next step:
   codex login
 
 After login finishes, rerun:
-  ./scripts/install-ubuntu.sh
+  ./scripts/deploy/install-ubuntu.sh
 EOF
     exit 1
   fi

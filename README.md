@@ -59,8 +59,12 @@ Important behavior:
 | `src/core/commands/` | Telegram command handling |
 | `src/core/approval/` | approval lifecycle and `/perm` parsing |
 | `src/core/workspace/` | workspace boundary enforcement and path validation |
-| `src/store/` | SQLite store, repositories, migrations |
+| `src/config/` | config loading, parsing, redaction, startup validation |
+| `src/store/` | SQLite store, split repositories, mappers, shared codecs |
+| `scripts/deploy/` | deployment and installation scripts |
+| `scripts/dev/` | local developer utility scripts |
 | `migrations/` | schema migrations |
+| `docs/testing/` | manual verification checklists |
 | `tests/unit/` | focused unit tests |
 | `tests/integration/` | multi-module and store-backed tests |
 
@@ -100,7 +104,7 @@ npm run setup
 Or use the Ubuntu/Debian helper:
 
 ```bash
-./scripts/install-ubuntu.sh
+./scripts/deploy/install-ubuntu.sh
 ```
 
 The setup flow will ask for:
@@ -205,13 +209,21 @@ Aliases are supported as shown below.
 
 ```bash
 npm run typecheck
-npx tsx --test tests\\unit\\*.test.ts tests\\integration\\*.test.ts
+npm run lint
+npm run format:check
+npm run test
+npm run lint:shell
 ```
 
 Key scripts:
 
 - `npm run build`
 - `npm run clean`
+- `npm run lint`
+- `npm run format`
+- `npm run format:check`
+- `npm run test`
+- `npm run lint:shell`
 - `npm run start`
 - `npm run serve`
 - `npm run stop`
@@ -219,6 +231,11 @@ Key scripts:
 - `npm run logs`
 - `npm run doctor`
 - `npm run setup`
+
+Notes:
+
+- `npm run lint:shell` runs a local wrapper. If `shellcheck` is unavailable on Windows, it exits successfully with a message and CI remains the real enforcement point.
+- CI runs on Ubuntu and executes `npm ci`, `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run lint:shell`.
 
 ## Deployment Notes
 
@@ -232,6 +249,8 @@ Key scripts:
 Current local verification before preparing this repository for GitHub:
 
 - `npm run typecheck`
-- `npx tsx --test tests\\unit\\*.test.ts tests\\integration\\*.test.ts`
+- `npm run lint`
+- `npm run format:check`
+- `npm run test`
 
-Both passed in the current workspace. Some integration tests are skipped on Windows because they require Linux-style workspace paths.
+All passed in the current workspace. `npm run lint:shell` may fall back locally when `shellcheck` is not installed, while CI runs the real shellcheck gate on Ubuntu. Some integration tests are skipped on Windows because they require Linux-style workspace paths.

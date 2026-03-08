@@ -29,7 +29,7 @@ git clone <your-repo-url> /srv/codex-telegram-bridge
 cd /srv/codex-telegram-bridge
 npm ci
 codex login
-./scripts/install-ubuntu.sh
+./scripts/deploy/install-ubuntu.sh
 ```
 
 The installer will:
@@ -44,7 +44,7 @@ The installer will:
 
 ```bash
 cd /srv/codex-telegram-bridge
-./scripts/install-ubuntu.sh --reconfigure
+./scripts/deploy/install-ubuntu.sh --reconfigure
 ```
 
 ## Manual Setup Alternative

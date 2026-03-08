@@ -4,7 +4,7 @@ const targets = process.argv.slice(2);
 
 if (targets.length === 0) {
   process.stderr.write(
-    "Usage: node scripts/run-shellcheck.mjs <file> [...files]\n"
+    "Usage: node scripts/dev/run-shellcheck.mjs <file> [...files]\n"
   );
   process.exit(1);
 }

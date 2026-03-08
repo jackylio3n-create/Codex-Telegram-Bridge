@@ -12,7 +12,7 @@
     "clean": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src tests",
-    "lint:shell": "node scripts/run-shellcheck.mjs scripts/install-ubuntu.sh",
+    "lint:shell": "node scripts/dev/run-shellcheck.mjs scripts/deploy/install-ubuntu.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts",

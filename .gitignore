@@ -1,15 +1,26 @@
 node_modules/
 dist/
+*.tsbuildinfo
 
 .env
 .env.local
 .env.*.local
 
 .codex/
+.idea/
+.vscode/
 
 coverage/
 
 *.log
+*.tmp
+*.bak
+*.orig
+*.rej
+
+.DS_Store
+Thumbs.db
+desktop.ini
 
 data/
 logs/

@@ -1,48 +1,49 @@
 # Codex Telegram Bridge
 
-一个面向 Linux 服务器部署的 Telegram 私聊桥接守护进程，用来把消息安全地转发到本地登录态的 `codex` CLI。
+一个面向 Linux 服务器部署的 Telegram 私聊桥接守护进程，用来把消息安全转发到本地已登录的 `codex` CLI。
 
 [English README](./README.md)
 
 ## 项目作用
 
-这个项目让白名单内的 Telegram 用户，可以通过私聊 bot 远程驱动一台 Linux 服务器上的 Codex 运行环境。
+这个项目让白名单内的 Telegram 用户通过私聊 bot 驱动一台自托管的 Codex 运行环境。
 
 设计重点：
 
-- 直接对接本机已登录的 `codex` CLI，不走 API key first 模式
-- 用 SQLite 持久化 session、审批、offset、运行状态和摘要
+- 直接调用本机已登录的 `codex` CLI，不走 API key first 架构
+- 使用 SQLite 持久化 session、审批、offset、运行状态和 rolling summary
 - 支持 Telegram 文本和图片输入
-- 首次对话必须先通过验证密码
+- 首次接触必须先通过验证密码
 - 验证成功后必须选择中文或英文提示语言
 - 未验证或已封禁的流量不会进入 Codex runtime
 - 默认采用更保守的隐私和留存策略
 
 ## 当前安全链路
 
-当前访问控制是分层的：
+当前访问控制按层执行：
 
-1. 只接受 Telegram 私聊
-2. 先校验 Telegram user id 白名单
-3. 可选 owner user/chat 硬锁
+1. 仅接受 Telegram 私聊
+2. 校验 Telegram user id 白名单
+3. 可选 owner user/chat 锁定
 4. 首次对话验证密码
 5. 语言选择完成前继续阻断
-6. 连续 5 次输错密码后，本地永久 ban 该 Telegram user id
+6. 连续 5 次输错密码后，本地永久封禁该 Telegram user id
 
 关键行为：
 
 - 第一次 `/start` 只发送双语欢迎，不计入失败次数
 - 验证前的文本、命令、文件、callback 都不会转发给 Codex
-- 被 ban 后消息、文件、callback 都会被静默丢弃
+- 被封禁后，消息、文件、callback 都会被静默丢弃
 
 ## 主要功能
 
-- Telegram 长轮询和 offset 持久化
-- 多 session 管理与 chat 绑定
+- Telegram 长轮询与 offset 持久化
+- 多 session 绑定、切换、重绑定
 - 工作目录切换、访问范围切换、旧 session 清理
-- 审批按钮与 `/perm` fallback
-- rolling summary、resume 和 stale recovery
-- setup 配置向导
+- Inline 审批按钮与 `/perm` fallback
+- Rolling summary、resume、stale recovery
+- 运行状态查看与诊断
+- 安全写入 env 的 setup 配置流
 - Ubuntu / Debian 安装脚本
 - 默认最小化审计与自动清理
 
@@ -56,9 +57,13 @@
 | `src/transport/telegram/` | Telegram client、polling、update 解析 |
 | `src/core/commands/` | Telegram 命令实现 |
 | `src/core/approval/` | 审批生命周期和 `/perm` 解析 |
-| `src/core/workspace/` | 工作区边界和路径校验 |
-| `src/store/` | SQLite store、repository、migration |
+| `src/core/workspace/` | 工作区边界与路径校验 |
+| `src/config/` | 配置解析、脱敏、启动校验 |
+| `src/store/` | SQLite store、拆分后的 repositories、mappers、共享 codecs |
+| `scripts/deploy/` | 部署与安装脚本 |
+| `scripts/dev/` | 本地开发辅助脚本 |
 | `migrations/` | 数据库迁移 |
+| `docs/testing/` | 手工验收与检查清单 |
 | `tests/unit/` | 单元测试 |
 | `tests/integration/` | 集成测试 |
 
@@ -95,10 +100,10 @@ codex login
 npm run setup
 ```
 
-或者直接用 Ubuntu / Debian 安装脚本：
+或直接使用 Ubuntu / Debian 安装脚本：
 
 ```bash
-./scripts/install-ubuntu.sh
+./scripts/deploy/install-ubuntu.sh
 ```
 
 配置阶段会要求输入：
@@ -143,7 +148,7 @@ npm run serve
 - `CODEX_TELEGRAM_BRIDGE_CODEX_HOME`
 - `CODEX_TELEGRAM_BRIDGE_LOG_LEVEL`
 
-隐私和留存配置：
+隐私与留存配置：
 
 - `CODEX_TELEGRAM_BRIDGE_AUDIT_LEVEL`
 - `CODEX_TELEGRAM_BRIDGE_INCLUDE_RUNTIME_IDENTIFIERS`
@@ -199,17 +204,25 @@ APP_HOME/
 | `/perm deny <permission_id>` | 拒绝请求 |
 | `/clean [keep_count]` 或 `/prune [keep_count]` | 清理非活动且未绑定的旧 session |
 
-## 开发与测试
+## 开发与验证
 
 ```bash
 npm run typecheck
-npx tsx --test tests\\unit\\*.test.ts tests\\integration\\*.test.ts
+npm run lint
+npm run format:check
+npm run test
+npm run lint:shell
 ```
 
 常用脚本：
 
 - `npm run build`
 - `npm run clean`
+- `npm run lint`
+- `npm run format`
+- `npm run format:check`
+- `npm run test`
+- `npm run lint:shell`
 - `npm run start`
 - `npm run serve`
 - `npm run stop`
@@ -217,6 +230,11 @@ npx tsx --test tests\\unit\\*.test.ts tests\\integration\\*.test.ts
 - `npm run logs`
 - `npm run doctor`
 - `npm run setup`
+
+说明：
+
+- `npm run lint:shell` 通过本地 wrapper 调用 `shellcheck`。如果 Windows 本机没有安装 `shellcheck`，命令会给出提示并成功退出，CI 仍然是实际的强制校验。
+- CI 在 Ubuntu 上执行 `npm ci`、`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run test`、`npm run lint:shell`。
 
 ## 部署说明
 
@@ -227,9 +245,11 @@ npx tsx --test tests\\unit\\*.test.ts tests\\integration\\*.test.ts
 
 ## 当前验证状态
 
-这次整理为 GitHub 可提交状态前，本地已执行：
+当前本地基线：
 
 - `npm run typecheck`
-- `npx tsx --test tests\\unit\\*.test.ts tests\\integration\\*.test.ts`
+- `npm run lint`
+- `npm run format:check`
+- `npm run test`
 
-二者均已通过。部分测试在 Windows 下会跳过，因为它们要求 Linux 风格工作区路径。
+以上都已通过。`npm run lint:shell` 在未安装 `shellcheck` 的 Windows 环境下会本地降级提示，但 CI 会在 Ubuntu 上执行真实 shellcheck。部分集成测试在 Windows 下会跳过，因为它们要求 Linux 风格工作区路径。
