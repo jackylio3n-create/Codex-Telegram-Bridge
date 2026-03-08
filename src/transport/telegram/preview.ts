@@ -62,9 +62,20 @@ export class TelegramPreviewPublisher {
 
     try {
       if (chunks.length === 1) {
-        await this.#client.editMessageText(handle.chatId, handle.previewMessageId, chunks[0]!.text);
+        const finalChunkText = chunks[0]!.text;
+        if (handle.previewText === finalChunkText) {
+          return {
+            previewHandle: handle,
+            sentMessageIds: [handle.previewMessageId]
+          };
+        }
+
+        await this.#client.editMessageText(handle.chatId, handle.previewMessageId, finalChunkText);
         return {
-          previewHandle: handle,
+          previewHandle: {
+            ...handle,
+            previewText: finalChunkText
+          },
           sentMessageIds: [handle.previewMessageId]
         };
       }
@@ -74,13 +85,24 @@ export class TelegramPreviewPublisher {
       const replacementText = canKeepFirstChunkInPreview
         ? firstChunk
         : `Completed. Sending ${chunks.length} message parts.`;
+      const remainingChunks = canKeepFirstChunkInPreview ? chunks.slice(1) : chunks;
+
+      if (handle.previewText === replacementText) {
+        const sentMessageIds = await this.#sendChunks(handle.chatId, remainingChunks);
+        return {
+          previewHandle: handle,
+          sentMessageIds: [handle.previewMessageId, ...sentMessageIds]
+        };
+      }
 
       await this.#client.editMessageText(handle.chatId, handle.previewMessageId, replacementText);
-      const remainingChunks = canKeepFirstChunkInPreview ? chunks.slice(1) : chunks;
       const sentMessageIds = await this.#sendChunks(handle.chatId, remainingChunks);
 
       return {
-        previewHandle: handle,
+        previewHandle: {
+          ...handle,
+          previewText: replacementText
+        },
         sentMessageIds: [handle.previewMessageId, ...sentMessageIds]
       };
     } catch {
@@ -121,6 +143,10 @@ export class TelegramPreviewPublisher {
         ...handle,
         previewText
       };
+    }
+
+    if (handle.previewText === previewText) {
+      return handle;
     }
 
     try {

@@ -27,7 +27,13 @@ import type {
   SessionSummaryCreateInput,
   SessionSummaryFilter,
   SessionSummaryRecord,
-  SessionUpsertInput
+  SessionUpsertInput,
+  TelegramUserAuthRecord,
+  TelegramUserAuthRepository,
+  TelegramUserFailedAttemptInput,
+  TelegramUserFirstSeenInput,
+  TelegramUserLanguagePreferenceInput,
+  TelegramUserVerificationInput
 } from "./types.js";
 
 export type StoreClock = () => Date;
@@ -44,7 +50,7 @@ export class SqliteSessionsRepository implements SessionsRepository {
   get(sessionId: string): SessionRecord | null {
     const row = this.#database.prepare(
       `SELECT session_id, workspace_root, extra_allowed_dirs_json, cwd, mode, codex_thread_id,
-              rolling_summary, run_state, cancellation_result, active_run_id, stale_recovered,
+              access_scope, rolling_summary, run_state, cancellation_result, active_run_id, stale_recovered,
               last_error, created_at, updated_at
        FROM sessions
        WHERE session_id = ?`
@@ -56,7 +62,7 @@ export class SqliteSessionsRepository implements SessionsRepository {
   list(): readonly SessionRecord[] {
     const rows = this.#database.prepare(
       `SELECT session_id, workspace_root, extra_allowed_dirs_json, cwd, mode, codex_thread_id,
-              rolling_summary, run_state, cancellation_result, active_run_id, stale_recovered,
+              access_scope, rolling_summary, run_state, cancellation_result, active_run_id, stale_recovered,
               last_error, created_at, updated_at
        FROM sessions
        ORDER BY updated_at DESC, session_id ASC`
@@ -67,7 +73,7 @@ export class SqliteSessionsRepository implements SessionsRepository {
 
   listOverview(): readonly SessionOverviewRecord[] {
     const rows = this.#database.prepare(
-      `SELECT session_id, workspace_root, extra_allowed_dirs_json, cwd, mode, run_state, active_run_id, updated_at
+      `SELECT session_id, workspace_root, extra_allowed_dirs_json, cwd, mode, access_scope, run_state, active_run_id, updated_at
        FROM sessions
        ORDER BY updated_at DESC, session_id ASC`
     ).all() as ReadonlyArray<Record<string, unknown>>;
@@ -93,6 +99,7 @@ export class SqliteSessionsRepository implements SessionsRepository {
       extraAllowedDirs: patch.extraAllowedDirs ?? existing.extraAllowedDirs,
       cwd: patch.cwd ?? existing.cwd,
       mode: patch.mode ?? existing.mode,
+      accessScope: patch.accessScope ?? existing.accessScope,
       codexThreadId: getNullableSessionValue(patch, "codexThreadId", existing.codexThreadId),
       rollingSummary: getNullableSessionValue(patch, "rollingSummary", existing.rollingSummary),
       runState: patch.runState ?? existing.runState,
@@ -127,15 +134,16 @@ export class SqliteSessionsRepository implements SessionsRepository {
   #persistSessionRecord(record: SessionRecord): void {
     this.#database.prepare(
       `INSERT INTO sessions (
-         session_id, workspace_root, extra_allowed_dirs_json, cwd, mode, codex_thread_id,
+         session_id, workspace_root, extra_allowed_dirs_json, cwd, mode, access_scope, codex_thread_id,
          rolling_summary, run_state, cancellation_result, active_run_id, stale_recovered,
          last_error, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          workspace_root = excluded.workspace_root,
          extra_allowed_dirs_json = excluded.extra_allowed_dirs_json,
          cwd = excluded.cwd,
          mode = excluded.mode,
+         access_scope = excluded.access_scope,
          codex_thread_id = excluded.codex_thread_id,
          rolling_summary = excluded.rolling_summary,
          run_state = excluded.run_state,
@@ -150,6 +158,7 @@ export class SqliteSessionsRepository implements SessionsRepository {
       serializeStringArray(record.extraAllowedDirs),
       record.cwd,
       record.mode,
+      record.accessScope,
       record.codexThreadId,
       record.rollingSummary,
       record.runState,
@@ -451,6 +460,181 @@ export class SqliteChannelOffsetsRepository implements ChannelOffsetsRepository 
   }
 }
 
+export class SqliteTelegramUserAuthRepository implements TelegramUserAuthRepository {
+  readonly #database: BridgeDatabase;
+  readonly #clock: StoreClock;
+
+  constructor(database: BridgeDatabase, clock: StoreClock) {
+    this.#database = database;
+    this.#clock = clock;
+  }
+
+  get(userId: string): TelegramUserAuthRecord | null {
+    const row = this.#database.prepare(
+      `SELECT user_id, latest_chat_id, first_seen_at, verified_at, preferred_language, failed_attempts, last_failed_at, banned_at, updated_at
+       FROM telegram_user_auth
+       WHERE user_id = ?`
+    ).get(userId) as Record<string, unknown> | undefined;
+
+    return row ? mapTelegramUserAuthRow(row) : null;
+  }
+
+  findByChatId(chatId: string): TelegramUserAuthRecord | null {
+    const row = this.#database.prepare(
+      `SELECT user_id, latest_chat_id, first_seen_at, verified_at, preferred_language, failed_attempts, last_failed_at, banned_at, updated_at
+       FROM telegram_user_auth
+       WHERE latest_chat_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    ).get(chatId) as Record<string, unknown> | undefined;
+
+    return row ? mapTelegramUserAuthRow(row) : null;
+  }
+
+  list(): readonly TelegramUserAuthRecord[] {
+    const rows = this.#database.prepare(
+      `SELECT user_id, latest_chat_id, first_seen_at, verified_at, preferred_language, failed_attempts, last_failed_at, banned_at, updated_at
+       FROM telegram_user_auth
+       ORDER BY updated_at DESC, user_id ASC`
+    ).all() as ReadonlyArray<Record<string, unknown>>;
+
+    return rows.map(mapTelegramUserAuthRow);
+  }
+
+  getOrCreateFirstSeen(input: TelegramUserFirstSeenInput): TelegramUserAuthRecord {
+    const existing = this.get(input.userId);
+    if (existing) {
+      const updatedAt = input.firstSeenAt ?? this.#clock().toISOString();
+      this.#database.prepare(
+        `UPDATE telegram_user_auth
+         SET latest_chat_id = ?,
+             updated_at = ?
+         WHERE user_id = ?`
+      ).run(input.chatId, updatedAt, input.userId);
+
+      return {
+        ...existing,
+        latestChatId: input.chatId,
+        updatedAt
+      };
+    }
+
+    const firstSeenAt = input.firstSeenAt ?? this.#clock().toISOString();
+    this.#database.prepare(
+      `INSERT INTO telegram_user_auth (
+         user_id, latest_chat_id, first_seen_at, verified_at, preferred_language, failed_attempts, last_failed_at, banned_at, updated_at
+       ) VALUES (?, ?, ?, NULL, NULL, 0, NULL, NULL, ?)`
+    ).run(input.userId, input.chatId, firstSeenAt, firstSeenAt);
+
+    return {
+      userId: input.userId,
+      latestChatId: input.chatId,
+      firstSeenAt,
+      verifiedAt: null,
+      preferredLanguage: null,
+      failedAttempts: 0,
+      lastFailedAt: null,
+      bannedAt: null,
+      updatedAt: firstSeenAt
+    };
+  }
+
+  markVerified(input: TelegramUserVerificationInput): TelegramUserAuthRecord {
+    return this.#database.withTransaction(() => {
+      const existing = this.getOrCreateFirstSeen({
+        userId: input.userId,
+        chatId: input.chatId,
+        ...(input.verifiedAt ? { firstSeenAt: input.verifiedAt } : {})
+      });
+      const verifiedAt = input.verifiedAt ?? this.#clock().toISOString();
+
+      this.#database.prepare(
+        `UPDATE telegram_user_auth
+         SET latest_chat_id = ?,
+             verified_at = ?,
+             failed_attempts = 0,
+             last_failed_at = NULL,
+             updated_at = ?
+         WHERE user_id = ?`
+      ).run(input.chatId, verifiedAt, verifiedAt, input.userId);
+
+      return {
+        ...existing,
+        latestChatId: input.chatId,
+        verifiedAt,
+        preferredLanguage: existing.preferredLanguage,
+        failedAttempts: 0,
+        lastFailedAt: null,
+        updatedAt: verifiedAt
+      };
+    });
+  }
+
+  setPreferredLanguage(input: TelegramUserLanguagePreferenceInput): TelegramUserAuthRecord {
+    return this.#database.withTransaction(() => {
+      const existing = this.getOrCreateFirstSeen({
+        userId: input.userId,
+        chatId: input.chatId,
+        ...(input.selectedAt ? { firstSeenAt: input.selectedAt } : {})
+      });
+      const selectedAt = input.selectedAt ?? this.#clock().toISOString();
+
+      this.#database.prepare(
+        `UPDATE telegram_user_auth
+         SET latest_chat_id = ?,
+             preferred_language = ?,
+             updated_at = ?
+         WHERE user_id = ?`
+      ).run(input.chatId, input.preferredLanguage, selectedAt, input.userId);
+
+      return {
+        ...existing,
+        latestChatId: input.chatId,
+        preferredLanguage: input.preferredLanguage,
+        updatedAt: selectedAt
+      };
+    });
+  }
+
+  recordFailedAttempt(input: TelegramUserFailedAttemptInput): TelegramUserAuthRecord {
+    if (input.banThreshold < 1) {
+      throw new Error(`Ban threshold must be positive. Received: ${input.banThreshold}.`);
+    }
+
+    return this.#database.withTransaction(() => {
+      const existing = this.getOrCreateFirstSeen({
+        userId: input.userId,
+        chatId: input.chatId,
+        ...(input.failedAt ? { firstSeenAt: input.failedAt } : {})
+      });
+      const failedAt = input.failedAt ?? this.#clock().toISOString();
+      const nextFailedAttempts = existing.verifiedAt ? 1 : existing.failedAttempts + 1;
+      const bannedAt = existing.bannedAt ?? (nextFailedAttempts >= input.banThreshold ? failedAt : null);
+
+      this.#database.prepare(
+        `UPDATE telegram_user_auth
+         SET latest_chat_id = ?,
+             failed_attempts = ?,
+             last_failed_at = ?,
+             banned_at = ?,
+             updated_at = ?
+         WHERE user_id = ?`
+      ).run(input.chatId, nextFailedAttempts, failedAt, bannedAt, failedAt, input.userId);
+
+      return {
+        ...existing,
+        latestChatId: input.chatId,
+        verifiedAt: existing.verifiedAt,
+        preferredLanguage: existing.preferredLanguage,
+        failedAttempts: nextFailedAttempts,
+        lastFailedAt: failedAt,
+        bannedAt,
+        updatedAt: failedAt
+      };
+    });
+  }
+}
+
 export class SqliteAuditLogsRepository implements AuditLogsRepository {
   readonly #database: BridgeDatabase;
   readonly #clock: StoreClock;
@@ -681,6 +865,7 @@ function mapSessionRow(row: Record<string, unknown>): SessionRecord {
     extraAllowedDirs: parseStringArray(row.extra_allowed_dirs_json),
     cwd: toStringValue(row.cwd),
     mode: toStringValue(row.mode) as SessionRecord["mode"],
+    accessScope: toStringValue(row.access_scope) as SessionRecord["accessScope"],
     codexThreadId: toNullableStringValue(row.codex_thread_id),
     rollingSummary: toNullableStringValue(row.rolling_summary),
     runState: toStringValue(row.run_state) as SessionRecord["runState"],
@@ -700,6 +885,7 @@ function mapSessionOverviewRow(row: Record<string, unknown>): SessionOverviewRec
     extraAllowedDirs: parseStringArray(row.extra_allowed_dirs_json),
     cwd: toStringValue(row.cwd),
     mode: toStringValue(row.mode) as SessionOverviewRecord["mode"],
+    accessScope: toStringValue(row.access_scope) as SessionOverviewRecord["accessScope"],
     runState: toStringValue(row.run_state) as SessionOverviewRecord["runState"],
     activeRunId: toNullableStringValue(row.active_run_id),
     updatedAt: toStringValue(row.updated_at)
@@ -741,6 +927,20 @@ function mapChannelOffsetRow(row: Record<string, unknown>): ChannelOffsetRecord 
   };
 }
 
+function mapTelegramUserAuthRow(row: Record<string, unknown>): TelegramUserAuthRecord {
+  return {
+    userId: toStringValue(row.user_id),
+    latestChatId: toStringValue(row.latest_chat_id),
+    firstSeenAt: toStringValue(row.first_seen_at),
+    verifiedAt: toNullableStringValue(row.verified_at),
+    preferredLanguage: toNullableStringValue(row.preferred_language) as TelegramUserAuthRecord["preferredLanguage"],
+    failedAttempts: toNumberValue(row.failed_attempts),
+    lastFailedAt: toNullableStringValue(row.last_failed_at),
+    bannedAt: toNullableStringValue(row.banned_at),
+    updatedAt: toStringValue(row.updated_at)
+  };
+}
+
 function mapAuditLogRow(row: Record<string, unknown>): AuditLogRecord {
   return {
     auditId: toNumberValue(row.audit_id),
@@ -775,6 +975,7 @@ function createSessionRecord(
     extraAllowedDirs: [...input.extraAllowedDirs],
     cwd: input.cwd,
     mode: input.mode,
+    accessScope: input.accessScope ?? existing?.accessScope ?? "workspace",
     codexThreadId: getNullableSessionValue(input, "codexThreadId", existing?.codexThreadId ?? null),
     rollingSummary: getNullableSessionValue(input, "rollingSummary", existing?.rollingSummary ?? null),
     runState: input.runState ?? existing?.runState ?? "idle",

@@ -80,7 +80,8 @@ export function startCodexRun(options: CodexStartRunOptions): CodexRunController
       emit,
       prompt: options.prompt.trim(),
       resumeThreadId: options.resumeThreadId ?? null,
-      ...(options.resumeThreadId ? {} : { cwd: options.runtimeContext.cwd })
+      ...(options.environment ? { environment: options.environment } : {}),
+      cwd: options.runtimeContext.cwd
     }, (child, exitPromise) => {
       activeChild = child;
       activeExitPromise = exitPromise;
@@ -104,6 +105,7 @@ export function startCodexRun(options: CodexStartRunOptions): CodexRunController
         emit,
         prompt: recoveredPrompt,
         resumeThreadId: null,
+        ...(options.environment ? { environment: options.environment } : {}),
         cwd: options.runtimeContext.cwd
       }, (child, exitPromise) => {
         activeChild = child;
@@ -163,6 +165,7 @@ async function launchAttempt(
     readonly emit: (event: CodexNormalizedEvent) => void;
     readonly prompt: string;
     readonly resumeThreadId: string | null;
+    readonly environment?: NodeJS.ProcessEnv;
     readonly cwd?: string;
   },
   onSpawn: (child: ChildProcess, exitPromise: Promise<number | null>) => void
@@ -171,6 +174,7 @@ async function launchAttempt(
     executablePath: input.executablePath,
     args: buildCodexArgs(input.options, input.resumeThreadId),
     prompt: input.prompt,
+    ...(input.environment ? { environment: input.environment } : {}),
     ...(input.cwd ? { cwd: input.cwd } : {})
   });
   const child = spawn(spawnPlan.command, spawnPlan.args, spawnPlan.options);
@@ -258,6 +262,9 @@ function buildCodexArgs(
   if (resumeThreadId) {
     args.push("resume", resumeThreadId);
     args.push("--json");
+    if (options.skipGitRepoCheck ?? true) {
+      args.push("--skip-git-repo-check");
+    }
     args.push("-c", `approval_policy="${policy.approval}"`);
     args.push("-c", `sandbox_mode="${policy.sandbox}"`);
     for (const imagePath of options.images ?? []) {
@@ -373,6 +380,7 @@ function createSpawnPlan(input: {
   readonly executablePath: string;
   readonly args: readonly string[];
   readonly prompt: string | null;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly cwd?: string;
 }): {
   readonly command: string;
@@ -384,7 +392,10 @@ function createSpawnPlan(input: {
   };
   readonly useStdin: boolean;
 } {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(input.environment ?? {})
+  };
 
   if (process.platform !== "win32") {
     return {

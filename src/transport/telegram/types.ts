@@ -103,11 +103,15 @@ export interface TelegramGetUpdatesOptions {
   readonly timeoutSeconds?: number;
   readonly limit?: number;
   readonly allowedUpdates?: readonly string[];
+  readonly signal?: AbortSignal;
 }
 
 export interface TelegramTransportOptions {
   readonly botToken: string;
   readonly allowedUserIds: readonly string[];
+  readonly verificationPasswordHash?: string | null;
+  readonly ownerUserId?: string | null;
+  readonly ownerChatId?: string | null;
   readonly pollingTimeoutSeconds?: number;
   readonly offsetChannelKey?: string;
   readonly previewCapabilityMode?: TelegramPreviewCapabilityMode;
@@ -133,6 +137,12 @@ export type TelegramIgnoredUpdateReason =
   | "unsupported_update"
   | "non_private_chat"
   | "user_not_allowed"
+  | "verification_required"
+  | "language_required"
+  | "language_selected"
+  | "user_banned"
+  | "owner_not_allowed"
+  | "owner_chat_mismatch"
   | "missing_sender"
   | "unsupported_message"
   | "unsupported_command"

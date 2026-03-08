@@ -22,6 +22,20 @@ export interface CodexLoginStatus {
   readonly rawOutput: string;
 }
 
+export interface CodexRateLimitWindow {
+  readonly usedPercent: number;
+  readonly windowMinutes: number | null;
+  readonly resetsAt: number | null;
+}
+
+export interface CodexAccountStatus {
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+  readonly fiveHourRemainingPercent: number | null;
+  readonly weeklyRemainingPercent: number | null;
+  readonly quotasUpdatedAt: string | null;
+}
+
 export interface CodexUsage {
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
@@ -134,6 +148,7 @@ export interface CodexStartRunOptions {
   readonly resumeThreadId?: string | null;
   readonly rollingSummary?: string | null;
   readonly skipGitRepoCheck?: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly onEvent?: (event: CodexNormalizedEvent) => void;
 }
 

@@ -2,6 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { posix as pathPosix } from "node:path";
 
 export type SessionMode = "ask" | "plan" | "code";
+export type SessionAccessScope = "workspace" | "system";
 export type WorkspaceIssueCode =
   | "path_not_absolute"
   | "path_empty"
@@ -18,6 +19,7 @@ export interface WorkspaceSessionState {
   readonly extraAllowedDirs: readonly string[];
   readonly cwd: string;
   readonly mode: SessionMode;
+  readonly accessScope: SessionAccessScope;
 }
 
 export interface WorkspaceIssue {
@@ -132,8 +134,11 @@ export function dedupeContainerPaths(paths: readonly string[]): readonly string[
   return output;
 }
 
-export function buildAllowedDirectorySet(session: Pick<WorkspaceSessionState, "workspaceRoot" | "extraAllowedDirs">): readonly string[] {
-  return dedupeContainerPaths([session.workspaceRoot, ...session.extraAllowedDirs]);
+export function buildAllowedDirectorySet(
+  session: Pick<WorkspaceSessionState, "workspaceRoot" | "extraAllowedDirs"> & Partial<Pick<WorkspaceSessionState, "accessScope">>
+): readonly string[] {
+  const scopeRoots = session.accessScope === "system" ? ["/"] : [];
+  return dedupeContainerPaths([session.workspaceRoot, ...session.extraAllowedDirs, ...scopeRoots]);
 }
 
 export function isPathInsideBase(targetPath: string, basePath: string): boolean {
@@ -165,7 +170,8 @@ export async function validateWorkspaceSession(
     workspaceRoot,
     extraAllowedDirs,
     cwd,
-    mode: session.mode
+    mode: session.mode,
+    accessScope: session.accessScope
   };
 
   if (cwd !== "" && !isPathInsideAllowedSet(cwd, normalizedAllowedDirs)) {

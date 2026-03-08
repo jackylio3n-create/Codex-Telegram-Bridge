@@ -30,7 +30,8 @@ import {
 } from "../../core/workspace/index.js";
 import type { AppConfig } from "../../config/index.js";
 import { createLogger, type Logger } from "../../logger/index.js";
-import { startCodexRun } from "../codex/index.js";
+import { selectText, type PromptLanguage } from "../../i18n.js";
+import { createCodexReasoningConfigService, createCodexStatusTextProvider, startCodexRun } from "../codex/index.js";
 import type {
   CodexCancelOutcome,
   CodexExecCommandBeginEvent,
@@ -61,8 +62,9 @@ const DEFAULT_INPUT_RATE_LIMIT = { max: 5, windowMs: 10_000 } as const;
 const DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT = { max: 4, windowMs: 30_000 } as const;
 const DEFAULT_MEDIA_FILE_SIZE_CAP_BYTES = 20 * 1024 * 1024;
 const ADD_DIR_CONFIRMATION_TTL_MS = 2 * 60 * 1000;
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const ACTIVE_RUN_STATES = new Set<SessionRunState>(["running", "waiting_approval", "cancelling"]);
-const ACTIVE_COMMANDS = new Set<NormalizedCommandRequest["command"]>(["new", "bind", "cwd", "mode", "adddir", "stop"]);
+const ACTIVE_COMMANDS = new Set<NormalizedCommandRequest["command"]>(["new", "bind", "cwd", "mode", "adddir", "stop", "prune"]);
 
 export interface BridgeRuntimeOptions {
   readonly config: AppConfig;
@@ -71,6 +73,7 @@ export interface BridgeRuntimeOptions {
   readonly clock?: () => Date;
   readonly telegramFetchImplementation?: TelegramFetch;
   readonly codexExecutablePath?: string;
+  readonly codexEnvironment?: NodeJS.ProcessEnv;
   readonly workspaceMutationOptions?: WorkspaceMutationOptions;
   readonly filesystemInspector?: FilesystemInspector;
   readonly visiblePolicy?: VisibleDirectoryPolicy;
@@ -157,6 +160,7 @@ export class BridgeRuntime {
   readonly #filesystemInspector: FilesystemInspector;
   readonly #visiblePolicy: VisibleDirectoryPolicy | undefined;
   readonly #codexExecutablePath: string;
+  readonly #codexEnvironment: NodeJS.ProcessEnv | undefined;
   readonly #workspaceMutationOptions: WorkspaceMutationOptions;
   readonly #activeRuns = new Map<string, ActiveRunContext>();
   readonly #activeRunCompletions = new Map<string, Promise<void>>();
@@ -187,6 +191,7 @@ export class BridgeRuntime {
     readonly clock: () => Date;
     readonly telegramFetchImplementation?: TelegramFetch;
     readonly codexExecutablePath: string;
+    readonly codexEnvironment?: NodeJS.ProcessEnv;
     readonly workspaceMutationOptions: WorkspaceMutationOptions;
     readonly filesystemInspector: FilesystemInspector;
     readonly visiblePolicy?: VisibleDirectoryPolicy;
@@ -199,12 +204,16 @@ export class BridgeRuntime {
     this.#filesystemInspector = options.filesystemInspector;
     this.#visiblePolicy = options.visiblePolicy;
     this.#codexExecutablePath = options.codexExecutablePath;
+    this.#codexEnvironment = options.codexEnvironment;
     this.#workspaceMutationOptions = options.workspaceMutationOptions;
     this.#routing = new InMemoryRoutingCore();
     this.#approval = new ApprovalService(this.#store.pendingPermissions, { clock: this.#clock });
     this.#commands = new CommandsService(this.#store, this.#routing, this.#approval, {
       defaultWorkspaceRoot: this.#config.defaultWorkspaceRoot,
-      workspaceMutationOptions: this.#workspaceMutationOptions
+      workspaceMutationOptions: this.#workspaceMutationOptions,
+      statusTextProvider: createCodexStatusTextProvider(this.#config.codexHome),
+      reasoningConfigService: createCodexReasoningConfigService(this.#config.codexHome),
+      languageResolver: (userId) => this.#store.telegramUserAuth.get(userId)?.preferredLanguage ?? "en"
     });
     this.#audit = new AuditService(this.#store.auditLogs, { clock: this.#clock });
     this.#summary = new SummaryService(this.#store, { clock: this.#clock });
@@ -215,6 +224,9 @@ export class BridgeRuntime {
     this.#polling = new TelegramPollingService(this.#telegramClient, this.#store, {
       botToken: this.#config.telegramBotToken,
       allowedUserIds: this.#config.allowedTelegramUserIds,
+      verificationPasswordHash: this.#config.verificationPasswordHash,
+      ownerUserId: this.#config.ownerTelegramUserId,
+      ownerChatId: this.#config.ownerTelegramChatId,
       pollingTimeoutSeconds: 30,
       offsetChannelKey: "telegram:getUpdates",
       previewCapabilityMode: "edit",
@@ -236,7 +248,10 @@ export class BridgeRuntime {
       level: options.config.logLevel,
       console: true,
       filePath: options.config.paths.logFilePath,
-      redactValues: [options.config.telegramBotToken]
+      redactValues: [
+        options.config.telegramBotToken,
+        ...(options.config.verificationPasswordHash ? [options.config.verificationPasswordHash] : [])
+      ]
     });
     const store = options.store ?? await createBridgeStore({ config: options.config, clock });
 
@@ -250,6 +265,7 @@ export class BridgeRuntime {
         ? { telegramFetchImplementation: options.telegramFetchImplementation }
         : {}),
       codexExecutablePath: options.codexExecutablePath ?? process.env.CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE ?? "codex",
+      ...(options.codexEnvironment ? { codexEnvironment: options.codexEnvironment } : {}),
       workspaceMutationOptions: {
         inspector: options.filesystemInspector ?? createNodeFilesystemInspector(),
         ...(options.visiblePolicy ? { visiblePolicy: options.visiblePolicy } : {}),
@@ -270,18 +286,28 @@ export class BridgeRuntime {
 
   async stop(): Promise<void> {
     if (this.#stopping) {
+      this.#logger.info("Stop requested while shutdown is already in progress.");
+      this.#polling.stop();
       await Promise.allSettled([...this.#activeRunCompletions.values()]);
       await this.#loopPromise;
-      await this.#persistState("stopped");
       return;
     }
 
     this.#stopping = true;
+    this.#logger.info("Bridge runtime stopping.", {
+      activeRunCount: this.#activeRuns.size,
+      activeRunCompletionCount: this.#activeRunCompletions.size
+    });
+    this.#polling.stop();
+    this.#logger.info("Polling stop requested.");
     await this.#persistState("stopping");
+    this.#logger.info("Runtime state persisted as stopping.");
     await this.#cancelAllActiveRuns();
+    this.#logger.info("Active run cancellation completed.");
     await Promise.allSettled([...this.#activeRunCompletions.values()]);
+    this.#logger.info("Active run completions settled.");
     await this.#loopPromise;
-    await this.#persistState("stopped");
+    this.#logger.info("Run loop exited.");
   }
 
   async getRuntimeState(): Promise<BridgeRuntimeState> {
@@ -300,6 +326,7 @@ export class BridgeRuntime {
     try {
       while (!this.#stopping) {
         await this.#expirePendingApprovals();
+        this.#runStoreCleanup();
         this.#pollMetrics = {
           ...this.#pollMetrics,
           lastPollAt: this.#clock().toISOString()
@@ -317,6 +344,11 @@ export class BridgeRuntime {
           };
           await this.#persistState("running");
         } catch (error) {
+          if (this.#stopping && isAbortError(error)) {
+            this.#logger.info("Polling aborted during shutdown.");
+            break;
+          }
+
           this.#logger.error("Polling iteration failed.", { error });
           this.#pollMetrics = {
             ...this.#pollMetrics,
@@ -429,6 +461,31 @@ export class BridgeRuntime {
     }
   }
 
+  #runStoreCleanup(): void {
+    const now = this.#clock();
+    const cleanup = this.#store.runCleanup({
+      approvalExpiryOlderThan: new Date(
+        now.getTime() - this.#config.defaults.expiredApprovalRetentionDays * MILLISECONDS_PER_DAY
+      ),
+      approvalResolutionOlderThan: new Date(
+        now.getTime() - this.#config.defaults.resolvedApprovalRetentionDays * MILLISECONDS_PER_DAY
+      ),
+      maxSummariesPerSession: this.#config.defaults.maxSummariesPerSession,
+      maxAuditRows: this.#config.defaults.maxAuditRows
+    });
+
+    if (
+      cleanup.deletedExpiredPermissions > 0
+      || cleanup.deletedResolvedPermissions > 0
+      || cleanup.deletedSummaryRows > 0
+      || cleanup.deletedAuditRows > 0
+    ) {
+      this.#logger.info("Store cleanup removed historical rows.", {
+        ...cleanup
+      });
+    }
+  }
+
   async #cancelAllActiveRuns(): Promise<void> {
     await Promise.all([...this.#activeRuns.keys()].map((sessionId) => this.#requestRunCancellation(sessionId)));
   }
@@ -436,7 +493,7 @@ export class BridgeRuntime {
   async #handleInboundEnvelope(envelope: TelegramInboundEnvelope): Promise<void> {
     this.#pollMetrics = {
       ...this.#pollMetrics,
-      lastEvent: `${envelope.inboundMessage.type}:${envelope.chatId}`
+      lastEvent: formatInboundEventMetric(envelope, this.#config.defaults.includeRuntimeIdentifiers)
     };
 
     switch (envelope.inboundMessage.type) {
@@ -461,7 +518,10 @@ export class BridgeRuntime {
       DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT.max,
       DEFAULT_DANGEROUS_COMMAND_RATE_LIMIT.windowMs
     )) {
-      await this.#sendText(envelope.chatId, "Rate limit reached. Please wait a moment and try again.");
+      await this.#sendText(
+        envelope.chatId,
+        this.#tChat(envelope.chatId, "触发频率限制，请稍后再试。", "Rate limit reached. Please wait a moment and try again.")
+      );
       return;
     }
 
@@ -472,10 +532,7 @@ export class BridgeRuntime {
         sessionId: boundSessionId,
         runId: null
       },
-      {
-        command: command.command,
-        args: extractCommandArgs(command)
-      }
+      buildUserCommandAuditPayload(command, this.#config.defaults.auditLevel)
     );
 
     if (command.command === "adddir") {
@@ -502,7 +559,10 @@ export class BridgeRuntime {
       DEFAULT_INPUT_RATE_LIMIT.max,
       DEFAULT_INPUT_RATE_LIMIT.windowMs
     )) {
-      await this.#sendText(envelope.chatId, "Rate limit reached. Please wait a moment and try again.");
+      await this.#sendText(
+        envelope.chatId,
+        this.#tChat(envelope.chatId, "触发频率限制，请稍后再试。", "Rate limit reached. Please wait a moment and try again.")
+      );
       return;
     }
 
@@ -514,7 +574,14 @@ export class BridgeRuntime {
 
     const session = this.#store.sessions.get(routed.binding.sessionId);
     if (!session) {
-      await this.#sendText(envelope.chatId, `Session "${routed.binding.sessionId}" no longer exists.`);
+      await this.#sendText(
+        envelope.chatId,
+        this.#tChat(
+          envelope.chatId,
+          `会话“${routed.binding.sessionId}”已不存在。`,
+          `Session "${routed.binding.sessionId}" no longer exists.`
+        )
+      );
       return;
     }
 
@@ -524,20 +591,18 @@ export class BridgeRuntime {
         sessionId: session.sessionId,
         runId: null
       },
-      input.contentType === "text"
-        ? {
-            contentType: "text",
-            preview: input.text.slice(0, 500)
-          }
-        : {
-            contentType: "image",
-            preview: input.caption?.slice(0, 500) ?? `telegram_file_id=${input.telegramFileId}`,
-            viaDocument: input.viaDocument
-          }
+      buildUserInputAuditPayload(input)
     );
 
     if (this.#activeRuns.has(session.sessionId) || ACTIVE_RUN_STATES.has(session.runState)) {
-      await this.#sendText(envelope.chatId, "This session is already busy. Use /status or /stop.");
+      await this.#sendText(
+        envelope.chatId,
+        this.#tChat(
+          envelope.chatId,
+          "当前会话正忙，请使用 /status 或 /stop。",
+          "This session is already busy. Use /status or /stop."
+        )
+      );
       return;
     }
 
@@ -582,7 +647,7 @@ export class BridgeRuntime {
       await this.#handleRuntimeApprovalResolution(resolution);
     }
 
-    await this.#sendText(decision.envelope.chatId, formatApprovalResolutionMessage(resolution));
+    await this.#sendText(decision.envelope.chatId, this.#formatApprovalResolutionMessage(decision.envelope.chatId, resolution));
   }
 
   async #handleCommandSideEffects(
@@ -679,7 +744,16 @@ export class BridgeRuntime {
       this.#workspaceMutationOptions
     );
     if (!confirmed.ok) {
-      await this.#sendText(command.envelope.chatId, formatIssuesMessage(`Rejected /adddir for ${command.path}.`, confirmed.issues));
+      await this.#sendText(
+        command.envelope.chatId,
+        this.#formatIssuesMessage(
+          command.envelope.chatId,
+          "chat",
+          `已拒绝 /adddir：${command.path}。`,
+          `Rejected /adddir for ${command.path}.`,
+          confirmed.issues
+        )
+      );
       return true;
     }
 
@@ -693,13 +767,21 @@ export class BridgeRuntime {
         sessionId: session.sessionId,
         runId: null
       },
-      {
-        changeType: "adddir",
-        nextPath: pending.confirmation.normalizedPath
-      }
+      buildFileChangeAuditPayload(
+        "adddir",
+        this.#config.defaults.auditLevel,
+        pending.confirmation.normalizedPath
+      )
     );
     this.#summary.refreshRollingSummary(session.sessionId);
-    await this.#sendText(command.envelope.chatId, `Added ${pending.confirmation.normalizedPath} to the allowed directory set.`);
+    await this.#sendText(
+      command.envelope.chatId,
+      this.#tChat(
+        command.envelope.chatId,
+        `已将 ${pending.confirmation.normalizedPath} 加入允许目录集合。`,
+        `Added ${pending.confirmation.normalizedPath} to the allowed directory set.`
+      )
+    );
     return true;
   }
 
@@ -717,10 +799,56 @@ export class BridgeRuntime {
     try {
       await this.#preview.sendFinalText(chatId, text);
     } catch (error) {
-      this.#logger.warn("Telegram send failed, retrying once.", { chatId, error });
+      this.#logger.warn("Telegram send failed, retrying once.", { error });
       await delay(300);
       await this.#preview.sendFinalText(chatId, text);
     }
+  }
+
+  #languageForChat(chatId: string): PromptLanguage {
+    return this.#store.telegramUserAuth.findByChatId(chatId)?.preferredLanguage ?? "en";
+  }
+
+  #languageForSession(sessionId: string): PromptLanguage {
+    const chatId = this.#store.chatBindings.list().find((binding) => binding.sessionId === sessionId)?.chatId;
+    return chatId ? this.#languageForChat(chatId) : "en";
+  }
+
+  #tChat(chatId: string, zh: string, en: string): string {
+    return selectText(this.#languageForChat(chatId), zh, en);
+  }
+
+  #tSession(sessionId: string, zh: string, en: string): string {
+    return selectText(this.#languageForSession(sessionId), zh, en);
+  }
+
+  #formatIssuesMessage(
+    targetId: string,
+    mode: "chat" | "session",
+    prefixZh: string,
+    prefixEn: string,
+    issues: readonly { readonly field: string; readonly message: string }[]
+  ): string {
+    const prefix = mode === "chat"
+      ? this.#tChat(targetId, prefixZh, prefixEn)
+      : this.#tSession(targetId, prefixZh, prefixEn);
+    if (issues.length === 0) {
+      return prefix;
+    }
+
+    return [prefix, ...issues.map((issue) => `- ${issue.field}: ${issue.message}`)].join("\n");
+  }
+
+  #formatApprovalResolutionMessage(chatId: string, resolution: ApprovalResolutionResult): string {
+    if (resolution.status === "approved") {
+      return this.#tChat(chatId, "已批准。", "Approval granted.");
+    }
+
+    if (resolution.status === "denied") {
+      return this.#tChat(chatId, "已拒绝。", "Approval denied.");
+    }
+
+    return this.#tChat(chatId, "已过期或已处理。", "Expired or already handled.");
   }
 
   async #startSessionRun(
@@ -760,7 +888,9 @@ export class BridgeRuntime {
     const prompt = buildPromptFromInput(input);
     const previewHandle = await this.#safeBeginPreview(
       input.envelope.chatId,
-      input.contentType === "image" ? "Image received. Running Codex..." : "Running Codex..."
+      input.contentType === "image"
+        ? this.#tChat(input.envelope.chatId, "已收到图片，正在运行 Codex...", "Image received. Running Codex...")
+        : this.#tChat(input.envelope.chatId, "正在运行 Codex...", "Running Codex...")
     );
 
     const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSession(session));
@@ -777,6 +907,7 @@ export class BridgeRuntime {
       images,
       resumeThreadId: session.codexThreadId,
       rollingSummary: session.rollingSummary,
+      ...(this.#codexEnvironment ? { environment: this.#codexEnvironment } : {}),
       runtimeContext: {
         cwd: runtimeWorkspace.cwd,
         extraWritableRoots: runtimeWorkspace.writableRoots.filter((root) => root !== runtimeWorkspace.cwd),
@@ -886,7 +1017,14 @@ export class BridgeRuntime {
         }
       );
       this.#summary.refreshRollingSummary(activeRun.sessionId);
-      await this.#safeFinalizePreview(activeRun.previewHandle, renderCancellationMessage(effectiveCancelOutcome));
+      await this.#safeFinalizePreview(
+        activeRun.previewHandle,
+        effectiveCancelOutcome.result === "full"
+          ? this.#tChat(activeRun.chatId, "运行已取消。", "Run cancelled.")
+          : effectiveCancelOutcome.result === "partial"
+            ? this.#tChat(activeRun.chatId, "运行已中断，取消前可能已有部分工作完成。", "Run interrupted. Some work may have completed before cancellation.")
+            : this.#tChat(activeRun.chatId, "已请求取消，但最终进程状态未知。", "Cancellation was requested, but the final process state is unknown.")
+      );
       return;
     }
 
@@ -897,12 +1035,12 @@ export class BridgeRuntime {
           sessionId: activeRun.sessionId,
           runId: activeRun.runId
         },
-        {
-          previousThreadId: this.#store.sessions.get(activeRun.sessionId)?.codexThreadId ?? null,
-          nextThreadId: result.threadId,
-          usedSummarySeed: result.usedSummarySeed,
-          reason: "stale_thread_resume_mismatch"
-        }
+        buildResumeRecoveryAuditPayload(
+          this.#store.sessions.get(activeRun.sessionId)?.codexThreadId ?? null,
+          result.threadId,
+          result.usedSummarySeed,
+          this.#config.defaults.auditLevel
+        )
       );
     }
 
@@ -956,7 +1094,7 @@ export class BridgeRuntime {
   async #handleCodexEvent(activeRun: ActiveRunContext, event: CodexNormalizedEvent): Promise<void> {
     this.#pollMetrics = {
       ...this.#pollMetrics,
-      lastEvent: `${event.kind}:${activeRun.sessionId}`
+      lastEvent: formatCodexEventMetric(event, activeRun.sessionId, this.#config.defaults.includeRuntimeIdentifiers)
     };
 
     switch (event.kind) {
@@ -973,10 +1111,7 @@ export class BridgeRuntime {
             sessionId: activeRun.sessionId,
             runId: activeRun.runId
           },
-          {
-            preview: event.text.slice(0, 500),
-            messageLength: event.text.length
-          }
+          buildAgentTextAuditPayload(event.text)
         );
         activeRun.previewHandle = await this.#preview.updatePreview(activeRun.previewHandle, event.text);
         return;
@@ -1017,8 +1152,8 @@ export class BridgeRuntime {
       userId: activeRun.userId,
       sourceMessageId: String(activeRun.previewHandle.previewMessageId ?? `run:${activeRun.runId}`),
       toolName: "exec_command",
-      summary: event.summary
-    });
+      summary: buildStoredApprovalSummary("exec_command", event.summary, this.#config.defaults.auditLevel)
+    }, this.#languageForChat(activeRun.chatId));
 
     const requested = await actor.enqueue({
       kind: "approval_requested",
@@ -1043,21 +1178,19 @@ export class BridgeRuntime {
     activeRun.pendingApproval = {
       permissionId: created.permission.permissionId,
       toolName: created.permission.toolName,
-      summary: created.permission.summary,
+      summary: event.summary,
       requestedAt: created.permission.createdAt,
       decision: null
     };
 
     this.#logger.warn("Runtime approval requested by Codex exec stream.", {
-      sessionId: activeRun.sessionId,
-      runId: activeRun.runId,
       permissionId: created.permission.permissionId,
-      summary: event.summary
+      toolName: created.permission.toolName
     });
-    await this.#sendApprovalRequestMessage(activeRun, created.permission, created.replyMarkup);
+    await this.#sendApprovalRequestMessage(activeRun, created.permission, created.replyMarkup, event.summary);
     activeRun.previewHandle = await this.#preview.updatePreview(
       activeRun.previewHandle,
-      `Waiting for approval: ${event.summary}`
+      this.#tChat(activeRun.chatId, `等待批准：${event.summary}`, `Waiting for approval: ${event.summary}`)
     );
     this.#summary.refreshRollingSummary(activeRun.sessionId);
     await this.#persistState("running");
@@ -1066,11 +1199,7 @@ export class BridgeRuntime {
       try {
         activeRun.parkingCancelOutcome = await activeRun.controller.cancel();
       } catch (error) {
-        this.#logger.warn("Failed to park run for approval.", {
-          sessionId: activeRun.sessionId,
-          runId: activeRun.runId,
-          error
-        });
+        this.#logger.warn("Failed to park run for approval.", { error });
       }
     }
   }
@@ -1078,20 +1207,20 @@ export class BridgeRuntime {
   async #sendApprovalRequestMessage(
     activeRun: ActiveRunContext,
     permission: PendingPermissionRecord,
-    replyMarkup: TelegramInlineKeyboardMarkup
+    replyMarkup: TelegramInlineKeyboardMarkup,
+    commandSummary: string
   ): Promise<void> {
     const lines = [
-      "Codex needs approval before it can continue.",
-      `Command: ${permission.summary}`,
-      `Permission ID: ${permission.permissionId}`,
-      "Use the buttons below or /perm approve <permission_id>."
+      this.#tChat(activeRun.chatId, "Codex 继续执行前需要审批。", "Codex needs approval before it can continue."),
+      this.#tChat(activeRun.chatId, `命令：${commandSummary}`, `Command: ${commandSummary}`),
+      this.#tChat(activeRun.chatId, `权限 ID：${permission.permissionId}`, `Permission ID: ${permission.permissionId}`),
+      this.#tChat(activeRun.chatId, "请使用下方按钮，或执行 /perm approve <permission_id>。", "Use the buttons below or /perm approve <permission_id>.")
     ];
 
     try {
       await this.#telegramClient.sendMessage(activeRun.chatId, lines.join("\n"), { replyMarkup });
     } catch (error) {
       this.#logger.warn("Failed to send approval keyboard, falling back to plain text.", {
-        chatId: activeRun.chatId,
         permissionId: permission.permissionId,
         error
       });
@@ -1202,6 +1331,7 @@ export class BridgeRuntime {
       images: [],
       resumeThreadId: session.codexThreadId,
       rollingSummary: session.rollingSummary,
+      ...(this.#codexEnvironment ? { environment: this.#codexEnvironment } : {}),
       runtimeContext: {
         cwd: runtimeWorkspace.cwd,
         extraWritableRoots: runtimeWorkspace.writableRoots.filter((root) => root !== runtimeWorkspace.cwd),
@@ -1276,10 +1406,7 @@ export class BridgeRuntime {
         sessionId: activeRun.sessionId,
         runId: activeRun.runId
       },
-      {
-        commandPreview: event.command.join(" "),
-        exitCode: null
-      }
+      buildShellExecAuditPayload(event.command, null, this.#config.defaults.auditLevel)
     );
     this.#audit.recordToolStart(
       {
@@ -1287,10 +1414,7 @@ export class BridgeRuntime {
         sessionId: activeRun.sessionId,
         runId: activeRun.runId
       },
-      {
-        toolName: "exec_command",
-        summary: event.command.join(" ")
-      }
+      buildToolStartAuditPayload("exec_command", event.command.join(" "), this.#config.defaults.auditLevel)
     );
   }
 
@@ -1304,7 +1428,7 @@ export class BridgeRuntime {
       {
         toolName: "exec_command",
         status: event.exitCode === 0 ? "success" : "error",
-        detail: event.aggregatedOutput.slice(0, 500)
+        ...buildToolResultDetail(event.aggregatedOutput, this.#config.defaults.auditLevel)
       }
     );
     this.#audit.recordShellExec(
@@ -1313,10 +1437,7 @@ export class BridgeRuntime {
         sessionId: activeRun.sessionId,
         runId: activeRun.runId
       },
-      {
-        commandPreview: event.command.join(" "),
-        exitCode: event.exitCode
-      }
+      buildShellExecAuditPayload(event.command, event.exitCode, this.#config.defaults.auditLevel)
     );
   }
 
@@ -1330,7 +1451,7 @@ export class BridgeRuntime {
       {
         toolName: "patch_apply",
         status: "success",
-        detail: event.changedPaths.join(", ")
+        ...buildToolResultDetail(event.changedPaths.join(", "), this.#config.defaults.auditLevel)
       }
     );
   }
@@ -1339,7 +1460,7 @@ export class BridgeRuntime {
     try {
       return await this.#preview.beginPreview(chatId, text);
     } catch (error) {
-      this.#logger.warn("Failed to publish preview message.", { chatId, error });
+      this.#logger.warn("Failed to publish preview message.", { error });
       return {
         chatId,
         mode: "none",
@@ -1352,7 +1473,7 @@ export class BridgeRuntime {
     try {
       await this.#preview.finalizePreview(handle, finalText);
     } catch (error) {
-      this.#logger.warn("Failed to finalize preview.", { chatId: handle.chatId, error });
+      this.#logger.warn("Failed to finalize preview.", { error });
       await this.#sendText(handle.chatId, finalText);
     }
   }
@@ -1368,7 +1489,13 @@ export class BridgeRuntime {
       return null;
     }
 
-    return formatIssuesMessage("The current session workspace is no longer valid.", blockingIssues);
+    return this.#formatIssuesMessage(
+      session.sessionId,
+      "session",
+      "当前会话工作区已无效。",
+      "The current session workspace is no longer valid.",
+      blockingIssues
+    );
   }
 
   async #downloadInboundImage(input: ImageUserInput): Promise<{ readonly tempFilePath: string }> {
@@ -1420,7 +1547,11 @@ export class BridgeRuntime {
 
     if (!activeRun.controller) {
       if (activeRun.lifecycle === "awaiting_approval") {
-        await this.#finalizeAwaitingApprovalRun(activeRun, "expired", "Run cancelled while waiting for approval.");
+        await this.#finalizeAwaitingApprovalRun(
+          activeRun,
+          "expired",
+          this.#tChat(activeRun.chatId, "运行在等待审批时已取消。", "Run cancelled while waiting for approval.")
+        );
       }
       return;
     }
@@ -1428,7 +1559,7 @@ export class BridgeRuntime {
     try {
       activeRun.cancelOutcome = await activeRun.controller.cancel();
     } catch (error) {
-      this.#logger.warn("Run cancellation failed.", { sessionId, error });
+      this.#logger.warn("Run cancellation failed.", { error });
     }
   }
 
@@ -1471,7 +1602,8 @@ function toWorkspaceSession(session: SessionRecord): WorkspaceSessionState {
     workspaceRoot: session.workspaceRoot,
     extraAllowedDirs: session.extraAllowedDirs,
     cwd: session.cwd,
-    mode: session.mode
+    mode: session.mode,
+    accessScope: session.accessScope
   };
 }
 
@@ -1542,6 +1674,9 @@ function extractCommandArgs(command: NormalizedCommandRequest): readonly string[
     case "sessions":
     case "start":
     case "perm":
+    case "prune":
+    case "reasoning":
+    case "scope":
       return command.args ?? [];
   }
 }
@@ -1571,27 +1706,164 @@ function renderCommandResult(command: NormalizedCommandRequest, result: CommandE
   return lines.join("\n");
 }
 
-function formatIssuesMessage(
-  prefix: string,
-  issues: readonly { readonly field: string; readonly message: string }[]
-): string {
-  if (issues.length === 0) {
-    return prefix;
-  }
-
-  return [prefix, ...issues.map((issue) => `- ${issue.field}: ${issue.message}`)].join("\n");
+function formatInboundEventMetric(envelope: TelegramInboundEnvelope, includeRuntimeIdentifiers: boolean): string {
+  return includeRuntimeIdentifiers
+    ? `${envelope.inboundMessage.type}:${envelope.chatId}`
+    : envelope.inboundMessage.type;
 }
 
-function formatApprovalResolutionMessage(resolution: ApprovalResolutionResult): string {
-  if (resolution.status === "approved") {
-    return "Approval granted.";
-  }
+function formatCodexEventMetric(
+  event: CodexNormalizedEvent,
+  sessionId: string,
+  includeRuntimeIdentifiers: boolean
+): string {
+  return includeRuntimeIdentifiers
+    ? `${event.kind}:${sessionId}`
+    : event.kind;
+}
 
-  if (resolution.status === "denied") {
-    return "Approval denied.";
-  }
+function buildUserCommandAuditPayload(
+  command: NormalizedCommandRequest,
+  auditLevel: AppConfig["defaults"]["auditLevel"]
+): {
+  readonly command: string;
+  readonly args?: readonly string[];
+} {
+  const args = extractCommandArgs(command);
+  return auditLevel === "debug" && args.length > 0
+    ? {
+        command: command.command,
+        args
+      }
+    : {
+        command: command.command
+      };
+}
 
-  return "Expired or already handled.";
+function buildUserInputAuditPayload(
+  input: Extract<NormalizedInboundMessage, { readonly type: "user_input" }>
+): {
+  readonly contentType: "text" | "image";
+  readonly messageLength: number;
+  readonly viaDocument?: boolean;
+  readonly hasCaption?: boolean;
+} {
+  return input.contentType === "text"
+    ? {
+        contentType: "text",
+        messageLength: input.text.length
+      }
+    : {
+        contentType: "image",
+        messageLength: input.caption?.length ?? 0,
+        viaDocument: input.viaDocument,
+        hasCaption: Boolean(input.caption?.trim())
+      };
+}
+
+function buildAgentTextAuditPayload(text: string): {
+  readonly messageLength: number;
+} {
+  return {
+    messageLength: text.length
+  };
+}
+
+function buildStoredApprovalSummary(
+  toolName: string,
+  summary: string,
+  auditLevel: AppConfig["defaults"]["auditLevel"]
+): string {
+  return auditLevel === "debug"
+    ? summary
+    : `${toolName} approval request`;
+}
+
+function buildFileChangeAuditPayload(
+  changeType: "cwd" | "adddir" | "workspace_root",
+  auditLevel: AppConfig["defaults"]["auditLevel"],
+  nextPath: string
+): {
+  readonly changeType: "cwd" | "adddir" | "workspace_root";
+  readonly nextPath?: string;
+} {
+  return auditLevel === "debug"
+    ? { changeType, nextPath }
+    : { changeType };
+}
+
+function buildResumeRecoveryAuditPayload(
+  previousThreadId: string | null,
+  nextThreadId: string | null,
+  usedSummarySeed: boolean,
+  auditLevel: AppConfig["defaults"]["auditLevel"]
+): {
+  readonly previousThreadId?: string | null;
+  readonly nextThreadId?: string | null;
+  readonly usedSummarySeed: boolean;
+  readonly reason: string;
+} {
+  return {
+    ...(auditLevel === "debug"
+      ? {
+          previousThreadId,
+          nextThreadId
+        }
+      : {}),
+    usedSummarySeed,
+    reason: "stale_thread_resume_mismatch"
+  };
+}
+
+function buildShellExecAuditPayload(
+  command: readonly string[],
+  exitCode: number | null,
+  auditLevel: AppConfig["defaults"]["auditLevel"]
+): {
+  readonly commandPreview?: string;
+  readonly commandWordCount: number;
+  readonly exitCode: number | null;
+} {
+  return {
+    ...(auditLevel === "debug" ? { commandPreview: command.join(" ") } : {}),
+    commandWordCount: command.length,
+    exitCode
+  };
+}
+
+function buildToolStartAuditPayload(
+  toolName: string,
+  summary: string,
+  auditLevel: AppConfig["defaults"]["auditLevel"]
+): {
+  readonly toolName: string;
+  readonly summary?: string;
+} {
+  return auditLevel === "debug"
+    ? {
+        toolName,
+        summary
+      }
+    : {
+        toolName
+      };
+}
+
+function buildToolResultDetail(
+  detail: string,
+  auditLevel: AppConfig["defaults"]["auditLevel"]
+): {
+  readonly detail?: string;
+} {
+  return auditLevel === "debug"
+    ? {
+        detail: detail.slice(0, 500)
+      }
+    : {};
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 function resolveTempExtension(mimeType: string, filePath: string): string {

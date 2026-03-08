@@ -13,6 +13,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "cli": "tsx src/cli/main.ts",
     "start": "tsx src/cli/main.ts start",
+    "serve": "tsx src/cli/main.ts serve",
+    "setup": "tsx src/cli/main.ts setup",
     "stop": "tsx src/cli/main.ts stop",
     "status": "tsx src/cli/main.ts status",
     "logs": "tsx src/cli/main.ts logs",

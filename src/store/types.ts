@@ -1,4 +1,8 @@
+import type { SessionAccessScope } from "../core/workspace/index.js";
+
 export type SessionMode = "ask" | "plan" | "code";
+import type { PromptLanguage } from "../i18n.js";
+
 export type SessionRunState =
   | "idle"
   | "running"
@@ -29,6 +33,7 @@ export interface SessionRecord {
   readonly extraAllowedDirs: readonly string[];
   readonly cwd: string;
   readonly mode: SessionMode;
+  readonly accessScope: SessionAccessScope;
   readonly codexThreadId: string | null;
   readonly rollingSummary: string | null;
   readonly runState: SessionRunState;
@@ -46,6 +51,7 @@ export interface SessionUpsertInput {
   readonly extraAllowedDirs: readonly string[];
   readonly cwd: string;
   readonly mode: SessionMode;
+  readonly accessScope?: SessionAccessScope;
   readonly codexThreadId?: string | null;
   readonly rollingSummary?: string | null;
   readonly runState?: SessionRunState;
@@ -62,6 +68,7 @@ export interface SessionPatch {
   readonly extraAllowedDirs?: readonly string[];
   readonly cwd?: string;
   readonly mode?: SessionMode;
+  readonly accessScope?: SessionAccessScope;
   readonly codexThreadId?: string | null;
   readonly rollingSummary?: string | null;
   readonly runState?: SessionRunState;
@@ -136,6 +143,44 @@ export interface ChannelOffsetUpsertInput {
   readonly updatedAt?: string;
 }
 
+export interface TelegramUserAuthRecord {
+  readonly userId: string;
+  readonly latestChatId: string;
+  readonly firstSeenAt: string;
+  readonly verifiedAt: string | null;
+  readonly preferredLanguage: PromptLanguage | null;
+  readonly failedAttempts: number;
+  readonly lastFailedAt: string | null;
+  readonly bannedAt: string | null;
+  readonly updatedAt: string;
+}
+
+export interface TelegramUserFirstSeenInput {
+  readonly userId: string;
+  readonly chatId: string;
+  readonly firstSeenAt?: string;
+}
+
+export interface TelegramUserVerificationInput {
+  readonly userId: string;
+  readonly chatId: string;
+  readonly verifiedAt?: string;
+}
+
+export interface TelegramUserFailedAttemptInput {
+  readonly userId: string;
+  readonly chatId: string;
+  readonly failedAt?: string;
+  readonly banThreshold: number;
+}
+
+export interface TelegramUserLanguagePreferenceInput {
+  readonly userId: string;
+  readonly chatId: string;
+  readonly preferredLanguage: PromptLanguage;
+  readonly selectedAt?: string;
+}
+
 export interface AuditLogRecord<TPayload = unknown> {
   readonly auditId: number;
   readonly sessionId: string | null;
@@ -201,6 +246,7 @@ export interface SessionOverviewRecord {
   readonly extraAllowedDirs: readonly string[];
   readonly cwd: string;
   readonly mode: SessionMode;
+  readonly accessScope: SessionAccessScope;
   readonly runState: SessionRunState;
   readonly activeRunId: string | null;
   readonly updatedAt: string;
@@ -257,6 +303,16 @@ export interface ChannelOffsetsRepository {
   save(input: ChannelOffsetUpsertInput): ChannelOffsetRecord;
 }
 
+export interface TelegramUserAuthRepository {
+  get(userId: string): TelegramUserAuthRecord | null;
+  findByChatId(chatId: string): TelegramUserAuthRecord | null;
+  list(): readonly TelegramUserAuthRecord[];
+  getOrCreateFirstSeen(input: TelegramUserFirstSeenInput): TelegramUserAuthRecord;
+  markVerified(input: TelegramUserVerificationInput): TelegramUserAuthRecord;
+  setPreferredLanguage(input: TelegramUserLanguagePreferenceInput): TelegramUserAuthRecord;
+  recordFailedAttempt(input: TelegramUserFailedAttemptInput): TelegramUserAuthRecord;
+}
+
 export interface AuditLogsRepository {
   append<TPayload = unknown>(input: AuditLogCreateInput<TPayload>): AuditLogRecord<TPayload>;
   list(filter?: AuditLogFilter): readonly AuditLogRecord[];
@@ -281,6 +337,7 @@ export interface BridgeStore {
   readonly chatBindings: ChatBindingsRepository;
   readonly pendingPermissions: PendingPermissionsRepository;
   readonly channelOffsets: ChannelOffsetsRepository;
+  readonly telegramUserAuth: TelegramUserAuthRepository;
   readonly auditLogs: AuditLogsRepository;
   readonly sessionSummaries: SessionSummariesRepository;
   readonly migrations: MigrationRepository;

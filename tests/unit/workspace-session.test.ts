@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyAccessScopeChange,
   applyCwdChange,
   confirmAddDir,
   initializeNewSessionWorkspace,
@@ -18,6 +19,7 @@ test("initializeNewSessionWorkspace inherits bound workspace root and falls back
   assert.equal(result.session.workspaceRoot, "/bound-root");
   assert.equal(result.session.cwd, "/bound-root");
   assert.equal(result.session.mode, "code");
+  assert.equal(result.session.accessScope, "workspace");
   assert.ok(result.issues.some((issue) => issue.field === "requestedCwd"));
 });
 
@@ -31,6 +33,7 @@ test("initializeNewSessionWorkspace keeps a normalized cwd when the only cwd iss
   assert.equal(result.ok, true);
   assert.equal(result.session.workspaceRoot, "/bound-root");
   assert.equal(result.session.cwd, "/bound-root/child");
+  assert.equal(result.session.accessScope, "workspace");
   assert.ok(
     result.issues.some((issue) => issue.code === "path_not_normalized" && issue.field === "cwd")
   );
@@ -42,7 +45,8 @@ test("applyCwdChange rejects a cwd outside the allowed directory set", async () 
     workspaceRoot: "/workspace",
     extraAllowedDirs: ["/extra"],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
 
   const result = await applyCwdChange(session, "/not-allowed");
@@ -59,7 +63,8 @@ test("applyCwdChange keeps a normalized cwd when the only cwd issue is non-block
     workspaceRoot: "/workspace",
     extraAllowedDirs: [],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
 
   const result = await applyCwdChange(session, "/workspace/./logs");
@@ -71,12 +76,31 @@ test("applyCwdChange keeps a normalized cwd when the only cwd issue is non-block
   );
 });
 
+test("applyAccessScopeChange falls back cwd to workspace root when narrowing from system scope", async () => {
+  const session = {
+    workspaceRoot: "/workspace",
+    extraAllowedDirs: [],
+    cwd: "/etc",
+    mode: "code" as const,
+    accessScope: "system" as const
+  };
+
+  const result = await applyAccessScopeChange(session, "workspace");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.fallbackCwdApplied, true);
+  assert.equal(result.session.accessScope, "workspace");
+  assert.equal(result.session.cwd, "/workspace");
+  assert.ok(result.issues.some((issue) => issue.field === "scope"));
+});
+
 test("prepareAddDirConfirmation rejects duplicates already in the allowed set", async () => {
   const session = {
     workspaceRoot: "/workspace",
     extraAllowedDirs: ["/extra"],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
 
   const result = await prepareAddDirConfirmation(session, "/extra");
@@ -93,7 +117,8 @@ test("prepareAddDirConfirmation short-circuits duplicate paths before filesystem
     workspaceRoot: "/workspace",
     extraAllowedDirs: [],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
   const inspector = {
     async lstat() {
@@ -122,7 +147,8 @@ test("prepareAddDirConfirmation rejects an empty requested path", async () => {
     workspaceRoot: "/workspace",
     extraAllowedDirs: [],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
 
   const result = await prepareAddDirConfirmation(session, "   ");
@@ -139,7 +165,8 @@ test("confirmAddDir applies a validated directory change", async () => {
     workspaceRoot: "/workspace",
     extraAllowedDirs: [],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
 
   const result = await confirmAddDir(session, {
@@ -151,6 +178,7 @@ test("confirmAddDir applies a validated directory change", async () => {
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.session.extraAllowedDirs, ["/logs"]);
+  assert.equal(result.session.accessScope, "workspace");
 });
 
 test("confirmAddDir rejects a duplicate confirmation against the current session", async () => {
@@ -158,7 +186,8 @@ test("confirmAddDir rejects a duplicate confirmation against the current session
     workspaceRoot: "/workspace",
     extraAllowedDirs: ["/logs"],
     cwd: "/workspace",
-    mode: "code" as const
+    mode: "code" as const,
+    accessScope: "workspace" as const
   };
 
   const result = await confirmAddDir(session, {

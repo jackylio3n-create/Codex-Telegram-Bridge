@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import type { PromptLanguage } from "../../i18n.js";
+import { selectText } from "../../i18n.js";
 import type { PendingPermissionRecord, PendingPermissionsRepository } from "../../store/types.js";
 import type { SessionActorSnapshot } from "../types/index.js";
 import type {
@@ -33,7 +35,10 @@ export class ApprovalService {
     this.#defaultApprovalTtlMs = options.defaultApprovalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
   }
 
-  createPendingApproval(input: ApprovalRequestInput): ApprovalRequestRecord {
+  createPendingApproval(
+    input: ApprovalRequestInput,
+    language: PromptLanguage = "en"
+  ): ApprovalRequestRecord {
     const createdAt = this.#clock();
     const permissionId = createOpaquePermissionId();
     const expiresAt = new Date(createdAt.getTime() + (input.ttlMs ?? this.#defaultApprovalTtlMs));
@@ -56,7 +61,7 @@ export class ApprovalService {
         approve: formatApprovalCallbackData("approve", permission.permissionId),
         deny: formatApprovalCallbackData("deny", permission.permissionId)
       },
-      replyMarkup: buildApprovalInlineKeyboard(permission.permissionId)
+      replyMarkup: buildApprovalInlineKeyboard(permission.permissionId, language)
     };
   }
 
@@ -67,7 +72,10 @@ export class ApprovalService {
     });
   }
 
-  parsePermCommand(args: readonly string[] | undefined): PermCommandParseResult {
+  parsePermCommand(
+    args: readonly string[] | undefined,
+    language: PromptLanguage = "en"
+  ): PermCommandParseResult {
     if (!args || args.length === 0) {
       return { kind: "list" };
     }
@@ -75,7 +83,10 @@ export class ApprovalService {
     if (args.length !== 2) {
       return {
         kind: "invalid",
-        message: "Use /perm or /perm <approve|deny> <permission_id>."
+        message: localize(language,
+          "用法：/perm 或 /perm <approve|deny> <permission_id>。",
+          "Usage: /perm or /perm <approve|deny> <permission_id>."
+        )
       };
     }
 
@@ -85,7 +96,10 @@ export class ApprovalService {
     if ((decisionToken !== "approve" && decisionToken !== "deny") || permissionId === "") {
       return {
         kind: "invalid",
-        message: "Use /perm approve <permission_id> or /perm deny <permission_id>."
+        message: localize(language,
+          "用法：/perm approve <permission_id> 或 /perm deny <permission_id>。",
+          "Usage: /perm approve <permission_id> or /perm deny <permission_id>."
+        )
       };
     }
 
@@ -98,20 +112,18 @@ export class ApprovalService {
     };
   }
 
-  formatPermFallbackText(sessionId: string): string {
+  formatPermFallbackText(sessionId: string, language: PromptLanguage = "en"): string {
     const pending = this.listPendingPermissionsForSession(sessionId);
     if (pending.length === 0) {
-      return "No pending approvals for this session.";
+      return localize(language, "当前会话没有待审批项。", "No pending approvals for this session.");
     }
 
     const lines = [
-      "Pending approvals:"
+      localize(language, "待审批项：", "Pending approvals:")
     ];
 
     for (const permission of pending) {
-      lines.push(
-        `- ${permission.permissionId} | ${permission.toolName} | ${permission.summary}`
-      );
+      lines.push(`- ${permission.permissionId} | ${permission.toolName} | ${permission.summary}`);
       lines.push(`  /perm approve ${permission.permissionId}`);
       lines.push(`  /perm deny ${permission.permissionId}`);
     }
@@ -119,12 +131,15 @@ export class ApprovalService {
     return lines.join("\n");
   }
 
-  resolveDecision(input: ApprovalDecisionInput): ApprovalResolutionResult {
+  resolveDecision(
+    input: ApprovalDecisionInput,
+    language: PromptLanguage = "en"
+  ): ApprovalResolutionResult {
     const permission = this.#pendingPermissions.get(input.permissionId);
     if (!permission) {
       return {
         status: "missing",
-        message: "Expired or already handled."
+        message: localize(language, "已过期或已处理。", "Expired or already handled.")
       };
     }
 
@@ -138,29 +153,27 @@ export class ApprovalService {
 
       return {
         status: "stale",
-        message: "Expired or already handled.",
+        message: localize(language, "已过期或已处理。", "Expired or already handled."),
         reason: staleReason,
         permission
       };
     }
 
     const resolution = input.decision === "approve" ? "approved" : "denied";
-    const resolved = this.#pendingPermissions.resolve(
-      permission.permissionId,
-      resolution,
-      nowIso
-    );
+    const resolved = this.#pendingPermissions.resolve(permission.permissionId, resolution, nowIso);
 
     if (!resolved) {
       return {
         status: "missing",
-        message: "Expired or already handled."
+        message: localize(language, "已过期或已处理。", "Expired or already handled.")
       };
     }
 
     return {
       status: input.decision === "approve" ? "approved" : "denied",
-      message: input.decision === "approve" ? "Approval granted." : "Approval denied.",
+      message: input.decision === "approve"
+        ? localize(language, "已批准。", "Approval granted.")
+        : localize(language, "已拒绝。", "Approval denied."),
       permission: resolved
     };
   }
@@ -216,16 +229,19 @@ export class ApprovalService {
   }
 }
 
-export function buildApprovalInlineKeyboard(permissionId: string) {
+export function buildApprovalInlineKeyboard(
+  permissionId: string,
+  language: PromptLanguage = "en"
+) {
   return {
     inline_keyboard: [
       [
         {
-          text: "Approve",
+          text: localize(language, "批准", "Approve"),
           callback_data: formatApprovalCallbackData("approve", permissionId)
         },
         {
-          text: "Deny",
+          text: localize(language, "拒绝", "Deny"),
           callback_data: formatApprovalCallbackData("deny", permissionId)
         }
       ]
@@ -242,4 +258,8 @@ export function formatApprovalCallbackData(
 
 function createOpaquePermissionId(): string {
   return randomBytes(9).toString("base64url");
+}
+
+function localize(language: PromptLanguage, zh: string, en: string): string {
+  return selectText(language, zh, en);
 }

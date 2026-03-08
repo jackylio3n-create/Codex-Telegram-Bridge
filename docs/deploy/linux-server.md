@@ -1,94 +1,104 @@
 # Linux Server Deployment
 
-## Prerequisites
+This guide covers a direct Ubuntu/Debian deployment of Codex Telegram Bridge.
 
-- Ubuntu, Debian, or another Linux distribution with Node.js 24+
-- A dedicated service user, for example `bridge`
-- A working `codex` CLI login under that service user's home directory
-- A Telegram bot token
-- At least one allowlisted Telegram user ID
+For a Chinese overview, see [README.zh-CN.md](../../README.zh-CN.md).
+
+## Requirements
+
+- Ubuntu or Debian
+- Node.js 24+
+- `npm`
+- `systemd`
+- installed `codex` CLI
+- completed `codex login`
+- Telegram bot token
+- one Telegram user ID to allowlist
 
 ## Recommended Layout
 
-```text
-/opt/codex-telegram-bridge
-/var/lib/codex-telegram-bridge
-/srv/codex-telegram-bridge/workspaces/main
-/home/bridge/.codex
-```
+- Repository checkout: `/srv/codex-telegram-bridge`
+- Workspace root: `/home/<user>/codex-workspaces/main`
+- App home: `/home/<user>/.local/share/codex-telegram-bridge`
+- Config file: `/home/<user>/.config/codex-telegram-bridge/config.env`
 
 ## Install
 
 ```bash
-cd /opt
-git clone <your-repo-url> codex-telegram-bridge
-cd codex-telegram-bridge
+git clone <your-repo-url> /srv/codex-telegram-bridge
+cd /srv/codex-telegram-bridge
 npm ci
+codex login
+./scripts/install-ubuntu.sh
 ```
 
-## Required Environment
+The installer will:
+
+- validate the runtime environment
+- ask for the bot token and Telegram allowlist user ID
+- ask for the first-contact verification password
+- generate the env file
+- install and start a `systemd` service
+
+## Reconfigure
 
 ```bash
-export CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN="123456:replace-me"
-export CODEX_TELEGRAM_BRIDGE_ALLOWED_TELEGRAM_USER_IDS="123456789"
-export CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT="/srv/codex-telegram-bridge/workspaces/main"
-export CODEX_TELEGRAM_BRIDGE_APP_HOME="/var/lib/codex-telegram-bridge"
-export CODEX_TELEGRAM_BRIDGE_CODEX_HOME="/home/bridge/.codex"
-export CODEX_TELEGRAM_BRIDGE_LOG_LEVEL="info"
+cd /srv/codex-telegram-bridge
+./scripts/install-ubuntu.sh --reconfigure
 ```
 
-## Validate Before Start
+## Manual Setup Alternative
+
+If you do not want to use the installer:
 
 ```bash
+cd /srv/codex-telegram-bridge
+npm run setup
 npm run doctor
+npm run serve
 ```
 
-## Run
+## First Telegram Login Flow
+
+For an allowlisted user:
+
+1. Send `/start` to the bot
+2. The bot sends a bilingual welcome
+3. Send the verification password in the next plain-text message
+4. Choose `中文` or `English`
+5. Start using normal bot commands
+
+Security notes:
+
+- `/start` does not count as a failed verification attempt
+- unverified messages, commands, files, and callbacks do not reach Codex
+- 5 wrong password attempts permanently ban that Telegram user ID locally
+
+## Useful Commands
 
 ```bash
-npm run start
-npm run status
-npm run logs 100
+systemctl status codex-telegram-bridge
+journalctl -u codex-telegram-bridge -n 100
+cd /srv/codex-telegram-bridge && npm run doctor
+cd /srv/codex-telegram-bridge && npm run status
+cd /srv/codex-telegram-bridge && npm run logs 100
 ```
 
-## Optional systemd Unit
-
-```ini
-[Unit]
-Description=Codex Telegram Bridge
-After=network.target
-
-[Service]
-Type=forking
-User=bridge
-WorkingDirectory=/opt/codex-telegram-bridge
-Environment=CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN=123456:replace-me
-Environment=CODEX_TELEGRAM_BRIDGE_ALLOWED_TELEGRAM_USER_IDS=123456789
-Environment=CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT=/srv/codex-telegram-bridge/workspaces/main
-Environment=CODEX_TELEGRAM_BRIDGE_APP_HOME=/var/lib/codex-telegram-bridge
-Environment=CODEX_TELEGRAM_BRIDGE_CODEX_HOME=/home/bridge/.codex
-Environment=CODEX_TELEGRAM_BRIDGE_LOG_LEVEL=info
-ExecStart=/usr/bin/npm run start
-ExecStop=/usr/bin/npm run stop
-ExecReload=/usr/bin/npm run stop
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Operational Commands
+## Updating the Service
 
 ```bash
-npm run status
-npm run logs 200
-npm run doctor
-npm run stop
+cd /srv/codex-telegram-bridge
+git pull
+npm ci
+npm run typecheck
+sudo systemctl restart codex-telegram-bridge
 ```
 
-## Notes
+If the update includes schema changes, the bridge will apply SQLite migrations on startup.
 
-- The workspace root must already exist before startup.
-- Session paths must be absolute Linux paths.
-- If you change the service user's Codex login, rerun `codex login status` as that user before restarting the bridge.
+## Troubleshooting
+
+- If `doctor` reports missing Codex login, run `codex login` again as the runtime user
+- If the service starts but Telegram messages do nothing, verify the allowlisted user ID and owner lock settings
+- If a user is banned during first-contact verification, remove the ban from local state manually before retrying
+- If workspace commands fail, check that all configured paths are absolute Linux paths

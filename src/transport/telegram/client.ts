@@ -38,6 +38,8 @@ export class TelegramBotClient {
       ...(typeof options.timeoutSeconds === "number" ? { timeout: options.timeoutSeconds } : {}),
       ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
       ...(options.allowedUpdates ? { allowed_updates: [...options.allowedUpdates] } : {})
+    }, {
+      ...(options.signal ? { signal: options.signal } : {})
     });
   }
 
@@ -105,13 +107,20 @@ export class TelegramBotClient {
     return new Uint8Array(arrayBuffer);
   }
 
-  async #callApi<TResult>(method: string, payload: Record<string, unknown>): Promise<TResult> {
+  async #callApi<TResult>(
+    method: string,
+    payload: Record<string, unknown>,
+    requestOptions: {
+      readonly signal?: AbortSignal;
+    } = {}
+  ): Promise<TResult> {
     const response = await this.#fetch(`${this.#apiBaseUrl}/${method}`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      ...(requestOptions.signal ? { signal: requestOptions.signal } : {})
     });
 
     if (!response.ok) {

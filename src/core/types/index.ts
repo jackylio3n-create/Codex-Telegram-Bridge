@@ -9,6 +9,7 @@ export type SessionRunState =
 
 export type CancellationResult = "full" | "partial" | "unknown";
 export type SessionMode = "ask" | "plan" | "code";
+export type SessionAccessScope = "workspace" | "system";
 export type ApprovalDecision = "approve" | "deny";
 export type RoutingSeverity = "info" | "warning" | "error";
 export type SessionEventRejectionReason =
@@ -101,6 +102,21 @@ export interface PermCommandRequest extends BaseCommandRequest {
   readonly args?: readonly string[];
 }
 
+export interface PruneCommandRequest extends BaseCommandRequest {
+  readonly command: "prune";
+  readonly args?: readonly string[];
+}
+
+export interface ReasoningCommandRequest extends BaseCommandRequest {
+  readonly command: "reasoning";
+  readonly args?: readonly string[];
+}
+
+export interface ScopeCommandRequest extends BaseCommandRequest {
+  readonly command: "scope";
+  readonly args?: readonly string[];
+}
+
 export type NormalizedCommandRequest =
   | BindCommandRequest
   | NewCommandRequest
@@ -111,7 +127,10 @@ export type NormalizedCommandRequest =
   | StopCommandRequest
   | SessionsCommandRequest
   | StartCommandRequest
-  | PermCommandRequest;
+  | PermCommandRequest
+  | PruneCommandRequest
+  | ReasoningCommandRequest
+  | ScopeCommandRequest;
 
 export type BoundCommandRequest =
   | PathCommandRequest
@@ -120,7 +139,8 @@ export type BoundCommandRequest =
   | HelpCommandRequest
   | SessionsCommandRequest
   | StartCommandRequest
-  | PermCommandRequest;
+  | PermCommandRequest
+  | ScopeCommandRequest;
 
 export interface NormalizedApprovalDecision {
   readonly type: "approval_decision";

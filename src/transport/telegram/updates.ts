@@ -1,4 +1,6 @@
-import type { BridgeStore } from "../../store/types.js";
+import type { BridgeStore, TelegramUserAuthRecord } from "../../store/types.js";
+import type { PromptLanguage } from "../../i18n.js";
+import { selectText, zhEn } from "../../i18n.js";
 import type {
   ApprovalDecision,
   EventEnvelope,
@@ -6,9 +8,9 @@ import type {
   NormalizedInboundMessage,
   SessionMode
 } from "../../core/types/index.js";
+import { verifyVerificationPassword } from "../../security/verification-password.js";
 import type { TelegramBotClient } from "./client.js";
 import type {
-  TelegramAcceptedUpdate,
   TelegramCallbackQuery,
   TelegramIgnoredUpdateResult,
   TelegramMessage,
@@ -21,14 +23,61 @@ import { pickPreferredPhotoSize } from "./photo.js";
 
 interface TelegramUpdateMapperDependencies {
   readonly allowedUserIds: ReadonlySet<string>;
-  readonly store: Pick<BridgeStore, "pendingPermissions">;
-  readonly client: Pick<TelegramBotClient, "answerCallbackQuery">;
+  readonly verificationPasswordHash: string | null;
+  readonly ownerUserId: string | null;
+  readonly ownerChatId: string | null;
+  readonly store: Pick<BridgeStore, "pendingPermissions" | "telegramUserAuth">;
+  readonly client: Pick<TelegramBotClient, "answerCallbackQuery" | "sendMessage">;
   readonly callbackReceivedText: string;
   readonly callbackStaleText: string;
 }
 
 const DEFAULT_CALLBACK_RECEIVED_TEXT = "Received.";
 const DEFAULT_CALLBACK_STALE_TEXT = "Expired or already handled.";
+const VERIFICATION_BAN_THRESHOLD = 5;
+const VERIFICATION_CALLBACK_REQUIRED_TEXT = "Verification required.";
+const VERIFICATION_WELCOME_TEXT = [
+  "欢迎使用。请发送验证密码完成身份确认。",
+  "",
+  "Welcome. Please send the verification password to continue."
+].join("\n");
+const VERIFICATION_PROMPT_TEXT = [
+  "需要先完成验证。",
+  "",
+  "Verification is required before this bot can be used."
+].join("\n");
+const VERIFICATION_SUCCESS_TEXT = [
+  "验证成功，已经确认身份，现在可以正常使用 Bot。",
+  "",
+  "Verification successful. You can now use the bot normally."
+].join("\n");
+const VERIFICATION_BANNED_TEXT = [
+  "验证失败次数过多，这个 Telegram 用户 ID 已被本地封禁。",
+  "",
+  "Too many incorrect attempts. This Telegram user ID has been blocked locally."
+].join("\n");
+const LOCALIZED_VERIFICATION_WELCOME_TEXT = zhEn(
+  "欢迎使用。请在下一条消息中输入验证密码完成身份确认。",
+  "Welcome. Please send the verification password in your next message to confirm your identity."
+);
+const LOCALIZED_VERIFICATION_PROMPT_TEXT = zhEn(
+  "请先输入验证密码。",
+  "Please send the verification password first."
+);
+const LOCALIZED_VERIFICATION_BANNED_TEXT = zhEn(
+  "验证失败次数过多，此 Telegram 用户 ID 已被本地封禁。",
+  "Too many incorrect attempts. This Telegram user ID has been blocked locally."
+);
+const LANGUAGE_SELECTION_CALLBACK_PREFIX = "lang:";
+const LANGUAGE_SELECTION_PROMPT_TEXT = zhEn(
+  "验证成功。请选择提示语言。",
+  "Verification successful. Please choose your prompt language."
+);
+const LANGUAGE_SELECTION_REMINDER_TEXT = zhEn(
+  "请先选择提示语言。",
+  "Please choose your prompt language first."
+);
+
 const PATH_COMMANDS = {
   cwd: true,
   adddir: true
@@ -39,13 +88,24 @@ const OPTIONAL_ARGS_COMMANDS = {
   stop: true,
   sessions: true,
   start: true,
-  perm: true
+  perm: true,
+  prune: true,
+  reasoning: true,
+  scope: true
 } as const;
 const SESSION_MODES = {
   ask: true,
   plan: true,
   code: true
 } as const;
+const COMMAND_ALIASES: Readonly<Record<string, string>> = {
+  stat: "status",
+  sess: "sessions",
+  cd: "cwd",
+  allow: "adddir",
+  think: "reasoning",
+  clean: "prune"
+};
 
 export async function mapTelegramUpdateToInbound(
   update: TelegramUpdate,
@@ -56,7 +116,7 @@ export async function mapTelegramUpdateToInbound(
   }
 
   if (update.message) {
-    return mapTelegramMessageUpdate(update.update_id, update.message, dependencies.allowedUserIds);
+    return mapTelegramMessageUpdate(update.update_id, update.message, dependencies);
   }
 
   if (update.callback_query) {
@@ -79,11 +139,11 @@ export function getTransportDefaults(options: Pick<
   };
 }
 
-function mapTelegramMessageUpdate(
+async function mapTelegramMessageUpdate(
   updateId: number,
   message: TelegramMessage,
-  allowedUserIds: ReadonlySet<string>
-): TelegramUpdateMappingResult {
+  dependencies: TelegramUpdateMapperDependencies
+): Promise<TelegramUpdateMappingResult> {
   const sender = message.from;
   if (!sender) {
     return ignored(updateId, "missing_sender", "Telegram message is missing the sender.");
@@ -93,8 +153,24 @@ function mapTelegramMessageUpdate(
     return ignored(updateId, "non_private_chat", "Only private chats are supported in V1.");
   }
 
-  if (!allowedUserIds.has(String(sender.id))) {
+  const senderId = String(sender.id);
+  const chatId = String(message.chat.id);
+
+  if (!dependencies.allowedUserIds.has(senderId)) {
     return ignored(updateId, "user_not_allowed", `Telegram user ${sender.id} is not allowlisted.`);
+  }
+
+  if (dependencies.ownerUserId && senderId !== dependencies.ownerUserId) {
+    return ignored(updateId, "owner_not_allowed", `Telegram user ${sender.id} is not the configured owner.`);
+  }
+
+  if (dependencies.ownerChatId && chatId !== dependencies.ownerChatId) {
+    return ignored(updateId, "owner_chat_mismatch", `Telegram chat ${message.chat.id} is not the configured owner chat.`);
+  }
+
+  const verificationGateResult = await handleVerificationMessageGate(updateId, message, senderId, chatId, dependencies);
+  if (verificationGateResult) {
+    return verificationGateResult;
   }
 
   const envelope = createEnvelope(message.chat.id, sender.id, message.message_id, message.date);
@@ -108,8 +184,8 @@ function mapTelegramMessageUpdate(
     envelope: {
       updateId,
       messageId: String(message.message_id),
-      chatId: String(message.chat.id),
-      userId: String(sender.id),
+      chatId,
+      userId: senderId,
       inboundMessage
     }
   };
@@ -130,6 +206,95 @@ async function mapTelegramCallbackQuery(
       "Callback data or callback message is missing.",
       dependencies
     );
+  }
+
+  if (message.chat.type !== "private") {
+    return answerStaleCallback(
+      updateId,
+      callbackQuery.id,
+      "non_private_chat",
+      "Only private chats are supported in V1.",
+      dependencies
+    );
+  }
+
+  const senderId = String(callbackQuery.from.id);
+  const chatId = String(message.chat.id);
+
+  if (!dependencies.allowedUserIds.has(senderId)) {
+    return answerStaleCallback(
+      updateId,
+      callbackQuery.id,
+      "user_not_allowed",
+      `Telegram user ${callbackQuery.from.id} is not allowlisted.`,
+      dependencies
+    );
+  }
+
+  if (dependencies.ownerUserId && senderId !== dependencies.ownerUserId) {
+    return answerStaleCallback(
+      updateId,
+      callbackQuery.id,
+      "owner_not_allowed",
+      `Telegram user ${callbackQuery.from.id} is not the configured owner.`,
+      dependencies
+    );
+  }
+
+  if (dependencies.ownerChatId && chatId !== dependencies.ownerChatId) {
+    return answerStaleCallback(
+      updateId,
+      callbackQuery.id,
+      "owner_chat_mismatch",
+      `Telegram chat ${message.chat.id} is not the configured owner chat.`,
+      dependencies
+    );
+  }
+
+  const authState = dependencies.store.telegramUserAuth.get(senderId);
+  if (authState?.bannedAt) {
+    return ignored(updateId, "user_banned", `Telegram user ${callbackQuery.from.id} is blocked locally.`);
+  }
+
+  const selectedLanguage = parseLanguageSelectionCallbackData(callbackData);
+  if (selectedLanguage) {
+    if (!authState?.verifiedAt) {
+      await dependencies.client.answerCallbackQuery(callbackQuery.id, {
+        text: VERIFICATION_CALLBACK_REQUIRED_TEXT,
+        showAlert: true
+      });
+      return ignored(updateId, "verification_required", `Telegram user ${callbackQuery.from.id} must verify before choosing a prompt language.`);
+    }
+
+    dependencies.store.telegramUserAuth.setPreferredLanguage({
+      userId: senderId,
+      chatId,
+      preferredLanguage: selectedLanguage
+    });
+    await dependencies.client.answerCallbackQuery(callbackQuery.id, {
+      text: selectText(selectedLanguage, "语言已保存。", "Language saved.")
+    });
+    await dependencies.client.sendMessage(chatId, buildLanguageSelectedText(selectedLanguage));
+    return ignored(updateId, "language_selected", `Telegram user ${callbackQuery.from.id} selected ${selectedLanguage} as the prompt language.`);
+  }
+
+  if (dependencies.verificationPasswordHash && !authState?.verifiedAt) {
+    await dependencies.client.answerCallbackQuery(callbackQuery.id, {
+      text: VERIFICATION_CALLBACK_REQUIRED_TEXT,
+      showAlert: true
+    });
+    return ignored(updateId, "verification_required", `Telegram user ${callbackQuery.from.id} must verify before using callback actions.`);
+  }
+
+  if (dependencies.verificationPasswordHash && authState?.verifiedAt && !authState.preferredLanguage) {
+    await dependencies.client.answerCallbackQuery(callbackQuery.id, {
+      text: LANGUAGE_SELECTION_REMINDER_TEXT,
+      showAlert: true
+    });
+    await dependencies.client.sendMessage(chatId, LANGUAGE_SELECTION_PROMPT_TEXT, {
+      replyMarkup: buildLanguageSelectionKeyboard()
+    });
+    return ignored(updateId, "language_required", `Telegram user ${callbackQuery.from.id} must choose a prompt language before using callback actions.`);
   }
 
   const parsed = parseApprovalCallbackData(callbackData);
@@ -155,7 +320,9 @@ async function mapTelegramCallbackQuery(
   }
 
   await dependencies.client.answerCallbackQuery(callbackQuery.id, {
-    text: dependencies.callbackReceivedText
+    text: authState?.preferredLanguage
+      ? selectText(authState.preferredLanguage, "已收到。", "Received.")
+      : dependencies.callbackReceivedText
   });
 
   const pendingDecision: NormalizedApprovalDecision = {
@@ -173,11 +340,86 @@ async function mapTelegramCallbackQuery(
     envelope: {
       updateId,
       messageId: String(message.message_id),
-      chatId: String(message.chat.id),
-      userId: String(callbackQuery.from.id),
+      chatId,
+      userId: senderId,
       inboundMessage: pendingDecision
     }
   };
+}
+
+async function handleVerificationMessageGate(
+  updateId: number,
+  message: TelegramMessage,
+  senderId: string,
+  chatId: string,
+  dependencies: TelegramUpdateMapperDependencies
+): Promise<TelegramUpdateMappingResult | null> {
+  const authState = dependencies.store.telegramUserAuth.get(senderId);
+  if (authState?.bannedAt) {
+    return ignored(updateId, "user_banned", `Telegram user ${senderId} is blocked locally.`);
+  }
+
+  if (!dependencies.verificationPasswordHash) {
+    return null;
+  }
+
+  if (authState?.verifiedAt && authState.preferredLanguage) {
+    return null;
+  }
+
+  if (authState?.verifiedAt && !authState.preferredLanguage) {
+    await dependencies.client.sendMessage(chatId, LANGUAGE_SELECTION_PROMPT_TEXT, {
+      replyMarkup: buildLanguageSelectionKeyboard()
+    });
+    return ignored(updateId, "language_required", `Telegram user ${senderId} must choose a prompt language before using the bot.`);
+  }
+
+  dependencies.store.telegramUserAuth.getOrCreateFirstSeen({
+    userId: senderId,
+    chatId,
+    firstSeenAt: new Date(message.date * 1000).toISOString()
+  });
+  const trimmedText = message.text?.trim() ?? "";
+
+  if (isStartCommandText(trimmedText)) {
+    await dependencies.client.sendMessage(chatId, authState ? LOCALIZED_VERIFICATION_PROMPT_TEXT : LOCALIZED_VERIFICATION_WELCOME_TEXT);
+    return ignored(updateId, "verification_required", `Telegram user ${senderId} must verify before using the bot.`);
+  }
+
+  if (trimmedText !== "" && !trimmedText.startsWith("/")) {
+    if (verifyVerificationPassword(trimmedText, dependencies.verificationPasswordHash)) {
+      dependencies.store.telegramUserAuth.markVerified({
+        userId: senderId,
+        chatId,
+        verifiedAt: new Date(message.date * 1000).toISOString()
+      });
+      await dependencies.client.sendMessage(chatId, LANGUAGE_SELECTION_PROMPT_TEXT, {
+        replyMarkup: buildLanguageSelectionKeyboard()
+      });
+      return ignored(updateId, "language_required", `Telegram user ${senderId} completed first-contact verification and must choose a prompt language.`);
+    }
+
+    const failed = dependencies.store.telegramUserAuth.recordFailedAttempt({
+      userId: senderId,
+      chatId,
+      failedAt: new Date(message.date * 1000).toISOString(),
+      banThreshold: VERIFICATION_BAN_THRESHOLD
+    });
+    if (failed.bannedAt) {
+      await dependencies.client.sendMessage(chatId, LOCALIZED_VERIFICATION_BANNED_TEXT);
+      return ignored(updateId, "user_banned", `Telegram user ${senderId} was blocked after repeated verification failures.`);
+    }
+
+    await dependencies.client.sendMessage(
+      chatId,
+      buildLocalizedVerificationFailureText(Math.max(VERIFICATION_BAN_THRESHOLD - failed.failedAttempts, 0))
+    );
+    return ignored(updateId, "verification_required", `Telegram user ${senderId} failed verification.`);
+  }
+
+  const reminderText = authState ? LOCALIZED_VERIFICATION_PROMPT_TEXT : LOCALIZED_VERIFICATION_WELCOME_TEXT;
+  await dependencies.client.sendMessage(chatId, reminderText);
+  return ignored(updateId, "verification_required", `Telegram user ${senderId} must verify before using the bot.`);
 }
 
 async function answerStaleCallback(
@@ -264,7 +506,7 @@ function parseCommandText(text: string, envelope: EventEnvelope): TelegramParsed
     return null;
   }
 
-  const commandToken = rawCommandToken.split("@")[0]?.toLowerCase() ?? "";
+  const commandToken = normalizeCommandToken(rawCommandToken);
   const rawArgs = restTokens.join(" ").trim();
 
   if (commandToken === "bind") {
@@ -346,10 +588,10 @@ function createModeCommand(
 }
 
 function createOptionalArgsCommand(
-  command: Extract<TelegramParsedCommand["command"], "status" | "help" | "stop" | "sessions" | "start" | "perm">,
+  command: Extract<TelegramParsedCommand["command"], "status" | "help" | "stop" | "sessions" | "start" | "perm" | "prune" | "reasoning" | "scope">,
   envelope: EventEnvelope,
   args: readonly string[]
-): Extract<TelegramParsedCommand, { readonly command: "status" | "help" | "stop" | "sessions" | "start" | "perm" }> {
+): Extract<TelegramParsedCommand, { readonly command: "status" | "help" | "stop" | "sessions" | "start" | "perm" | "prune" | "reasoning" | "scope" }> {
   return {
     type: "command",
     command,
@@ -364,12 +606,17 @@ function isPathCommand(command: string): command is Extract<TelegramParsedComman
 
 function isOptionalArgsCommand(
   command: string
-): command is Extract<TelegramParsedCommand["command"], "status" | "help" | "stop" | "sessions" | "start" | "perm"> {
+): command is Extract<TelegramParsedCommand["command"], "status" | "help" | "stop" | "sessions" | "start" | "perm" | "prune" | "reasoning" | "scope"> {
   return Object.hasOwn(OPTIONAL_ARGS_COMMANDS, command);
 }
 
 function isSessionMode(mode: string): mode is SessionMode {
   return Object.hasOwn(SESSION_MODES, mode);
+}
+
+function normalizeCommandToken(rawCommandToken: string): string {
+  const normalized = rawCommandToken.split("@")[0]?.toLowerCase() ?? "";
+  return COMMAND_ALIASES[normalized] ?? normalized;
 }
 
 function parseApprovalCallbackData(payload: string): {
@@ -408,6 +655,67 @@ function createEnvelope(
     messageId: String(messageId),
     receivedAt: new Date(messageDateSeconds * 1000).toISOString()
   };
+}
+
+function buildVerificationFailureText(remainingAttempts: number): string {
+  return [
+    `验证密码错误，还剩 ${remainingAttempts} 次机会。`,
+    "",
+    `Incorrect verification password. ${remainingAttempts} attempt${remainingAttempts === 1 ? "" : "s"} remaining.`
+  ].join("\n");
+}
+
+function buildLocalizedVerificationFailureText(remainingAttempts: number): string {
+  return zhEn(
+    `验证密码错误。剩余 ${remainingAttempts} 次机会。`,
+    `Incorrect verification password. ${remainingAttempts} attempt${remainingAttempts === 1 ? "" : "s"} remaining.`
+  );
+}
+
+function parseLanguageSelectionCallbackData(payload: string): PromptLanguage | null {
+  if (payload === `${LANGUAGE_SELECTION_CALLBACK_PREFIX}zh`) {
+    return "zh";
+  }
+
+  if (payload === `${LANGUAGE_SELECTION_CALLBACK_PREFIX}en`) {
+    return "en";
+  }
+
+  return null;
+}
+
+function buildLanguageSelectionKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "中文",
+          callback_data: `${LANGUAGE_SELECTION_CALLBACK_PREFIX}zh`
+        },
+        {
+          text: "English",
+          callback_data: `${LANGUAGE_SELECTION_CALLBACK_PREFIX}en`
+        }
+      ]
+    ]
+  } as const;
+}
+
+function buildLanguageSelectedText(language: PromptLanguage): string {
+  return selectText(
+    language,
+    "后续提示将使用中文。",
+    "Future prompts will be shown in English."
+  );
+}
+
+function isStartCommandText(text: string): boolean {
+  if (!text.startsWith("/")) {
+    return false;
+  }
+
+  const [rawCommandToken] = text.slice(1).split(/\s+/);
+  return rawCommandToken ? normalizeCommandToken(rawCommandToken) === "start" : false;
 }
 
 function ignored(

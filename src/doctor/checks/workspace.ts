@@ -48,7 +48,8 @@ export async function buildWorkspaceCheck(
         workspaceRoot: session.workspaceRoot,
         extraAllowedDirs: session.extraAllowedDirs,
         cwd: session.cwd,
-        mode: session.mode
+        mode: session.mode,
+        accessScope: session.accessScope
       },
       {
         inspector,
@@ -67,7 +68,8 @@ export async function buildWorkspaceCheck(
     details.push(
       `session=${session.sessionId} | allowed=${buildAllowedDirectorySet({
         workspaceRoot: session.workspaceRoot,
-        extraAllowedDirs: session.extraAllowedDirs
+        extraAllowedDirs: session.extraAllowedDirs,
+        accessScope: session.accessScope
       }).join(", ")}`
     );
     for (const issue of result.issues) {

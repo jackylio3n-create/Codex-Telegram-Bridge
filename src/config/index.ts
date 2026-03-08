@@ -2,9 +2,11 @@ import { access, mkdir, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isVerificationPasswordHash } from "../security/verification-password.js";
 
 export type AppEnvironment = "development" | "test" | "production";
 export type AppLogLevel = "debug" | "info" | "warn" | "error";
+export type AppAuditLevel = "minimal" | "debug";
 export type ConfigIssueSeverity = "error" | "warning";
 
 export interface ConfigIssue {
@@ -15,9 +17,15 @@ export interface ConfigIssue {
 }
 
 export interface AppDefaults {
-  readonly previewMaxLength: 1500;
-  readonly finalChunkMaxLength: 3600;
-  readonly offsetJumpWarningThreshold: 10000;
+  readonly previewMaxLength: number;
+  readonly finalChunkMaxLength: number;
+  readonly offsetJumpWarningThreshold: number;
+  readonly auditLevel: AppAuditLevel;
+  readonly includeRuntimeIdentifiers: boolean;
+  readonly maxAuditRows: number;
+  readonly maxSummariesPerSession: number;
+  readonly resolvedApprovalRetentionDays: number;
+  readonly expiredApprovalRetentionDays: number;
 }
 
 export interface AppPaths {
@@ -37,7 +45,10 @@ export interface AppConfig {
   readonly codexHome: string;
   readonly defaultWorkspaceRoot: string;
   readonly telegramBotToken: string;
+  readonly verificationPasswordHash: string | null;
   readonly allowedTelegramUserIds: readonly string[];
+  readonly ownerTelegramUserId: string | null;
+  readonly ownerTelegramChatId: string | null;
   readonly logLevel: AppLogLevel;
   readonly secretEnvVarNames: readonly string[];
   readonly paths: AppPaths;
@@ -64,12 +75,20 @@ const ENV_PREFIX = "CODEX_TELEGRAM_BRIDGE_";
 const DEFAULTS: AppDefaults = {
   previewMaxLength: 1500,
   finalChunkMaxLength: 3600,
-  offsetJumpWarningThreshold: 10000
+  offsetJumpWarningThreshold: 10000,
+  auditLevel: "minimal",
+  includeRuntimeIdentifiers: false,
+  maxAuditRows: 1000,
+  maxSummariesPerSession: 10,
+  resolvedApprovalRetentionDays: 7,
+  expiredApprovalRetentionDays: 1
 };
 const SECRET_ENV_VAR_NAMES = Object.freeze([
-  `${ENV_PREFIX}TELEGRAM_BOT_TOKEN`
+  `${ENV_PREFIX}TELEGRAM_BOT_TOKEN`,
+  `${ENV_PREFIX}VERIFICATION_PASSWORD_HASH`
 ]);
 const LOG_LEVELS: readonly AppLogLevel[] = ["debug", "info", "warn", "error"];
+const AUDIT_LEVELS: readonly AppAuditLevel[] = ["minimal", "debug"];
 
 export function loadAppConfig(options: LoadAppConfigOptions = {}): LoadAppConfigResult {
   const sourceEnv = options.env ?? process.env;
@@ -105,9 +124,26 @@ export function loadAppConfig(options: LoadAppConfigOptions = {}): LoadAppConfig
     `${ENV_PREFIX}TELEGRAM_BOT_TOKEN`,
     issues
   );
+  const verificationPasswordHash = parseOptionalVerificationPasswordHash(
+    sourceEnv[`${ENV_PREFIX}VERIFICATION_PASSWORD_HASH`],
+    `${ENV_PREFIX}VERIFICATION_PASSWORD_HASH`,
+    issues
+  );
   const allowedTelegramUserIds = parseAllowedTelegramUserIds(
     sourceEnv[`${ENV_PREFIX}ALLOWED_TELEGRAM_USER_IDS`],
     `${ENV_PREFIX}ALLOWED_TELEGRAM_USER_IDS`,
+    issues
+  );
+  const ownerTelegramUserId = resolveOwnerTelegramUserId(
+    sourceEnv[`${ENV_PREFIX}OWNER_TELEGRAM_USER_ID`],
+    allowedTelegramUserIds,
+    `${ENV_PREFIX}OWNER_TELEGRAM_USER_ID`,
+    `${ENV_PREFIX}ALLOWED_TELEGRAM_USER_IDS`,
+    issues
+  );
+  const ownerTelegramChatId = parseOptionalNumericTelegramId(
+    sourceEnv[`${ENV_PREFIX}OWNER_TELEGRAM_CHAT_ID`],
+    `${ENV_PREFIX}OWNER_TELEGRAM_CHAT_ID`,
     issues
   );
   const logLevel = parseLogLevel(
@@ -115,6 +151,44 @@ export function loadAppConfig(options: LoadAppConfigOptions = {}): LoadAppConfig
     `${ENV_PREFIX}LOG_LEVEL`,
     issues
   );
+  const defaults: AppDefaults = {
+    ...DEFAULTS,
+    auditLevel: parseAuditLevel(
+      sourceEnv[`${ENV_PREFIX}AUDIT_LEVEL`],
+      `${ENV_PREFIX}AUDIT_LEVEL`,
+      issues
+    ),
+    includeRuntimeIdentifiers: parseBooleanFlag(
+      sourceEnv[`${ENV_PREFIX}INCLUDE_RUNTIME_IDENTIFIERS`],
+      `${ENV_PREFIX}INCLUDE_RUNTIME_IDENTIFIERS`,
+      DEFAULTS.includeRuntimeIdentifiers,
+      issues
+    ),
+    maxAuditRows: parseNonNegativeInteger(
+      sourceEnv[`${ENV_PREFIX}MAX_AUDIT_ROWS`],
+      `${ENV_PREFIX}MAX_AUDIT_ROWS`,
+      DEFAULTS.maxAuditRows,
+      issues
+    ),
+    maxSummariesPerSession: parseNonNegativeInteger(
+      sourceEnv[`${ENV_PREFIX}MAX_SUMMARIES_PER_SESSION`],
+      `${ENV_PREFIX}MAX_SUMMARIES_PER_SESSION`,
+      DEFAULTS.maxSummariesPerSession,
+      issues
+    ),
+    resolvedApprovalRetentionDays: parseNonNegativeInteger(
+      sourceEnv[`${ENV_PREFIX}RESOLVED_APPROVAL_RETENTION_DAYS`],
+      `${ENV_PREFIX}RESOLVED_APPROVAL_RETENTION_DAYS`,
+      DEFAULTS.resolvedApprovalRetentionDays,
+      issues
+    ),
+    expiredApprovalRetentionDays: parseNonNegativeInteger(
+      sourceEnv[`${ENV_PREFIX}EXPIRED_APPROVAL_RETENTION_DAYS`],
+      `${ENV_PREFIX}EXPIRED_APPROVAL_RETENTION_DAYS`,
+      DEFAULTS.expiredApprovalRetentionDays,
+      issues
+    )
+  };
 
   const paths: AppPaths = {
     appHome,
@@ -133,11 +207,14 @@ export function loadAppConfig(options: LoadAppConfigOptions = {}): LoadAppConfig
     codexHome,
     defaultWorkspaceRoot,
     telegramBotToken,
+    verificationPasswordHash,
     allowedTelegramUserIds,
+    ownerTelegramUserId,
+    ownerTelegramChatId,
     logLevel,
     secretEnvVarNames: SECRET_ENV_VAR_NAMES,
     paths,
-    defaults: DEFAULTS
+    defaults
   };
 
   return {
@@ -162,6 +239,15 @@ export async function validateStartupEnvironment(
   await ensureExistingDirectory(config.codexHome, "codexHome", issues);
   await ensureExistingDirectory(config.defaultWorkspaceRoot, "defaultWorkspaceRoot", issues);
 
+  if (!config.verificationPasswordHash) {
+    issues.push({
+      severity: "warning",
+      field: `${ENV_PREFIX}VERIFICATION_PASSWORD_HASH`,
+      message: "Telegram first-contact verification password is not configured.",
+      hint: "Run `npm run setup` again to enable the one-time Telegram password check."
+    });
+  }
+
   return issues;
 }
 
@@ -185,7 +271,11 @@ export function redactConfigForDisplay(config: AppConfig): Record<string, unknow
     codexHome: config.codexHome,
     defaultWorkspaceRoot: config.defaultWorkspaceRoot,
     telegramBotToken: maskSecret(config.telegramBotToken),
-    allowedTelegramUserIds: [...config.allowedTelegramUserIds],
+    verificationPasswordHash: maskNullableSecret(config.verificationPasswordHash),
+    allowedTelegramUserIds: config.allowedTelegramUserIds.map(maskIdentifier),
+    allowedTelegramUserCount: config.allowedTelegramUserIds.length,
+    ownerTelegramUserId: maskNullableIdentifier(config.ownerTelegramUserId),
+    ownerTelegramChatId: maskNullableIdentifier(config.ownerTelegramChatId),
     logLevel: config.logLevel,
     secretEnvVarNames: [...config.secretEnvVarNames],
     paths: {
@@ -290,6 +380,88 @@ function parseAllowedTelegramUserIds(
   return parsedIds;
 }
 
+function parseOptionalVerificationPasswordHash(
+  rawValue: string | undefined,
+  field: string,
+  issues: ConfigIssue[]
+): string | null {
+  const normalizedValue = rawValue?.trim();
+  if (normalizedValue === undefined || normalizedValue === "") {
+    return null;
+  }
+
+  if (!isVerificationPasswordHash(normalizedValue)) {
+    issues.push({
+      severity: "error",
+      field,
+      message: "Verification password hash is invalid.",
+      hint: "Regenerate it with `npm run setup` instead of editing it manually."
+    });
+    return null;
+  }
+
+  return normalizedValue;
+}
+
+function resolveOwnerTelegramUserId(
+  rawValue: string | undefined,
+  allowedUserIds: readonly string[],
+  field: string,
+  allowedField: string,
+  issues: ConfigIssue[]
+): string | null {
+  const explicitOwnerId = parseOptionalNumericTelegramId(rawValue, field, issues);
+  if (explicitOwnerId) {
+    if (!allowedUserIds.includes(explicitOwnerId)) {
+      issues.push({
+        severity: "error",
+        field,
+        message: `Owner Telegram user ID "${explicitOwnerId}" must also be present in ${allowedField}.`
+      });
+    }
+
+    return explicitOwnerId;
+  }
+
+  if (allowedUserIds.length === 1) {
+    return allowedUserIds[0] ?? null;
+  }
+
+  if (allowedUserIds.length > 1) {
+    issues.push({
+      severity: "warning",
+      field,
+      message: "Owner Telegram user ID is not locked.",
+      hint: `Set ${field} to one of the allowlisted IDs if this bot should remain self-use only.`
+    });
+  }
+
+  return null;
+}
+
+function parseOptionalNumericTelegramId(
+  rawValue: string | undefined,
+  field: string,
+  issues: ConfigIssue[]
+): string | null {
+  const normalizedValue = rawValue?.trim();
+  if (normalizedValue === undefined || normalizedValue === "") {
+    return null;
+  }
+
+  if (!/^\d+$/.test(normalizedValue)) {
+    issues.push({
+      severity: "error",
+      field,
+      message: `Invalid Telegram ID "${normalizedValue}".`,
+      hint: "Telegram IDs must contain digits only."
+    });
+    return null;
+  }
+
+  return normalizedValue;
+}
+
 function parseLogLevel(
   rawValue: string | undefined,
   field: string,
@@ -311,6 +483,79 @@ function parseLogLevel(
     hint: 'Use one of: "debug", "info", "warn", or "error".'
   });
   return "info";
+}
+
+function parseAuditLevel(
+  rawValue: string | undefined,
+  field: string,
+  issues: ConfigIssue[]
+): AppAuditLevel {
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return DEFAULTS.auditLevel;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase() as AppAuditLevel;
+  if (AUDIT_LEVELS.includes(normalizedValue)) {
+    return normalizedValue;
+  }
+
+  issues.push({
+    severity: "error",
+    field,
+    message: `Unsupported audit level "${rawValue}".`,
+    hint: 'Use one of: "minimal" or "debug".'
+  });
+  return DEFAULTS.auditLevel;
+}
+
+function parseBooleanFlag(
+  rawValue: string | undefined,
+  field: string,
+  fallback: boolean,
+  issues: ConfigIssue[]
+): boolean {
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return fallback;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+  if (normalizedValue === "true" || normalizedValue === "1" || normalizedValue === "yes") {
+    return true;
+  }
+
+  if (normalizedValue === "false" || normalizedValue === "0" || normalizedValue === "no") {
+    return false;
+  }
+
+  issues.push({
+    severity: "error",
+    field,
+    message: `Unsupported boolean value "${rawValue}".`,
+    hint: 'Use one of: "true", "false", "1", "0", "yes", or "no".'
+  });
+  return fallback;
+}
+
+function parseNonNegativeInteger(
+  rawValue: string | undefined,
+  field: string,
+  fallback: number,
+  issues: ConfigIssue[]
+): number {
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return fallback;
+  }
+
+  if (!/^\d+$/.test(rawValue.trim())) {
+    issues.push({
+      severity: "error",
+      field,
+      message: `Invalid non-negative integer "${rawValue}".`
+    });
+    return fallback;
+  }
+
+  return Number(rawValue.trim());
 }
 
 function resolveConfiguredPath(
@@ -507,6 +752,22 @@ function maskSecret(secret: string): string {
   }
 
   return `${secret.slice(0, 2)}${"*".repeat(Math.max(secret.length - 4, 4))}${secret.slice(-2)}`;
+}
+
+function maskNullableSecret(secret: string | null): string | null {
+  return secret === null ? null : maskSecret(secret);
+}
+
+function maskIdentifier(value: string): string {
+  if (value.length <= 4) {
+    return "*".repeat(Math.max(value.length, 4));
+  }
+
+  return `${value.slice(0, 2)}${"*".repeat(Math.max(value.length - 4, 4))}${value.slice(-2)}`;
+}
+
+function maskNullableIdentifier(value: string | null): string | null {
+  return value === null ? null : maskIdentifier(value);
 }
 
 function getErrorMessage(error: unknown): string {

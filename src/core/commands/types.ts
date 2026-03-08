@@ -1,6 +1,12 @@
 import type { ApprovalRequestRecord, ApprovalResolutionResult } from "../approval/index.js";
 import type { NormalizedCommandRequest, SessionActorSnapshot } from "../types/index.js";
-import type { AddDirConfirmation, WorkspaceIssue, WorkspaceSessionState } from "../workspace/index.js";
+import type { PromptLanguage } from "../../i18n.js";
+import type {
+  AddDirConfirmation,
+  SessionAccessScope,
+  WorkspaceIssue,
+  WorkspaceSessionState
+} from "../workspace/index.js";
 import type { ChatBindingRecord, SessionOverviewRecord, SessionRecord } from "../../store/types.js";
 
 export type BridgeCommandStatus = "ok" | "rejected" | "confirmation_required";
@@ -37,6 +43,13 @@ export interface CommandsServiceOptions {
   readonly defaultWorkspaceRoot: string;
   readonly sessionIdFactory?: () => string;
   readonly workspaceMutationOptions?: import("../workspace/index.js").WorkspaceMutationOptions;
+  readonly statusTextProvider?: () => Promise<string> | string;
+  readonly reasoningConfigService?: {
+    readonly supportedValues: readonly string[];
+    getCurrentEffort(): Promise<string | null> | string | null;
+    setCurrentEffort(value: string): Promise<void> | void;
+  };
+  readonly languageResolver?: (userId: string) => PromptLanguage;
 }
 
 export interface NewCommandData {
@@ -62,4 +75,21 @@ export interface AddDirCommandData {
 
 export interface PermCommandData {
   readonly approvalResult?: ApprovalResolutionResult;
+}
+
+export interface PruneCommandData {
+  readonly keepCount: number;
+  readonly keptSessionIds: readonly string[];
+  readonly deletedSessionIds: readonly string[];
+  readonly skippedBoundCount: number;
+  readonly skippedActiveCount: number;
+}
+
+export interface ReasoningCommandData {
+  readonly currentEffort: string | null;
+  readonly supportedValues: readonly string[];
+}
+
+export interface ScopeCommandData {
+  readonly currentScope: SessionAccessScope;
 }

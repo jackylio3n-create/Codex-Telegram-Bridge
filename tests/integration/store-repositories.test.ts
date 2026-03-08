@@ -197,6 +197,76 @@ test("pending permission list supports descending limits for recent rows", async
   }
 });
 
+test("telegram user auth tracks first contact, resets on verify, and bans after threshold", async () => {
+  const harness = await createStoreHarness();
+
+  try {
+    const firstSeen = harness.store.telegramUserAuth.getOrCreateFirstSeen({
+      userId: "user-1",
+      chatId: "chat-1",
+      firstSeenAt: "2026-03-06T12:00:00.000Z"
+    });
+    assert.equal(firstSeen.failedAttempts, 0);
+    assert.equal(firstSeen.verifiedAt, null);
+    assert.equal(firstSeen.preferredLanguage, null);
+
+    const failed = harness.store.telegramUserAuth.recordFailedAttempt({
+      userId: "user-1",
+      chatId: "chat-1",
+      failedAt: "2026-03-06T12:01:00.000Z",
+      banThreshold: 5
+    });
+    assert.equal(failed.failedAttempts, 1);
+    assert.equal(failed.bannedAt, null);
+
+    const verified = harness.store.telegramUserAuth.markVerified({
+      userId: "user-1",
+      chatId: "chat-1",
+      verifiedAt: "2026-03-06T12:02:00.000Z"
+    });
+    assert.equal(verified.failedAttempts, 0);
+    assert.equal(verified.lastFailedAt, null);
+    assert.equal(verified.verifiedAt, "2026-03-06T12:02:00.000Z");
+
+    const localized = harness.store.telegramUserAuth.setPreferredLanguage({
+      userId: "user-1",
+      chatId: "chat-1",
+      preferredLanguage: "zh",
+      selectedAt: "2026-03-06T12:02:30.000Z"
+    });
+    assert.equal(localized.preferredLanguage, "zh");
+    assert.equal(harness.store.telegramUserAuth.findByChatId("chat-1")?.userId, "user-1");
+
+    harness.store.telegramUserAuth.getOrCreateFirstSeen({
+      userId: "user-2",
+      chatId: "chat-2",
+      firstSeenAt: "2026-03-06T12:03:00.000Z"
+    });
+
+    let banned = harness.store.telegramUserAuth.get("user-2");
+    for (const [index, failedAt] of [
+      "2026-03-06T12:04:00.000Z",
+      "2026-03-06T12:05:00.000Z",
+      "2026-03-06T12:06:00.000Z",
+      "2026-03-06T12:07:00.000Z",
+      "2026-03-06T12:08:00.000Z"
+    ].entries()) {
+      banned = harness.store.telegramUserAuth.recordFailedAttempt({
+        userId: "user-2",
+        chatId: "chat-2",
+        failedAt,
+        banThreshold: 5
+      });
+      assert.equal(banned.failedAttempts, index + 1);
+    }
+
+    assert.equal(banned?.bannedAt, "2026-03-06T12:08:00.000Z");
+    assert.equal(harness.store.telegramUserAuth.list().length, 2);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("audit logs listRecentByEventType applies per-type limits in one ordered result set", async () => {
   const harness = await createStoreHarness();
 
@@ -383,6 +453,126 @@ test("session summaries pruneToMaxPerSession keeps only the latest rows per sess
         "session-2-2026-03-06T12:05:00.000Z",
         "session-2-2026-03-06T12:04:00.000Z"
       ]
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("store runCleanup prunes historical approvals, audit rows, and summaries together", async () => {
+  const harness = await createStoreHarness();
+
+  try {
+    harness.store.sessions.save({
+      sessionId: "session-1",
+      workspaceRoot: "/workspaces/main",
+      extraAllowedDirs: [],
+      cwd: "/workspaces/main",
+      mode: "code",
+      createdAt: "2026-03-06T12:00:00.000Z",
+      updatedAt: "2026-03-06T12:00:00.000Z"
+    });
+
+    harness.store.pendingPermissions.create({
+      permissionId: "perm-expired-old",
+      sessionId: "session-1",
+      runId: "run-1",
+      chatId: "chat-1",
+      userId: "user-1",
+      sourceMessageId: "message-1",
+      toolName: "exec_command",
+      summary: "expired old",
+      expiresAt: "2026-03-01T12:00:00.000Z",
+      createdAt: "2026-03-01T12:00:00.000Z"
+    });
+    harness.store.pendingPermissions.create({
+      permissionId: "perm-resolved-old",
+      sessionId: "session-1",
+      runId: "run-2",
+      chatId: "chat-1",
+      userId: "user-1",
+      sourceMessageId: "message-2",
+      toolName: "exec_command",
+      summary: "resolved old",
+      expiresAt: "2026-03-04T12:00:00.000Z",
+      createdAt: "2026-03-04T12:00:00.000Z"
+    });
+    harness.store.pendingPermissions.resolve("perm-resolved-old", "approved", "2026-03-04T13:00:00.000Z");
+    harness.store.pendingPermissions.create({
+      permissionId: "perm-resolved-new",
+      sessionId: "session-1",
+      runId: "run-3",
+      chatId: "chat-1",
+      userId: "user-1",
+      sourceMessageId: "message-3",
+      toolName: "exec_command",
+      summary: "resolved new",
+      expiresAt: "2026-03-06T12:00:00.000Z",
+      createdAt: "2026-03-06T12:00:00.000Z"
+    });
+    harness.store.pendingPermissions.resolve("perm-resolved-new", "denied", "2026-03-06T12:30:00.000Z");
+
+    harness.store.auditLogs.append({
+      sessionId: "session-1",
+      eventType: "user_command",
+      payload: { note: "audit-1" },
+      createdAt: "2026-03-06T12:01:00.000Z"
+    });
+    harness.store.auditLogs.append({
+      sessionId: "session-1",
+      eventType: "user_command",
+      payload: { note: "audit-2" },
+      createdAt: "2026-03-06T12:02:00.000Z"
+    });
+    harness.store.auditLogs.append({
+      sessionId: "session-1",
+      eventType: "user_command",
+      payload: { note: "audit-3" },
+      createdAt: "2026-03-06T12:03:00.000Z"
+    });
+
+    harness.store.sessionSummaries.append({
+      sessionId: "session-1",
+      content: "summary-1",
+      createdAt: "2026-03-06T12:01:00.000Z"
+    });
+    harness.store.sessionSummaries.append({
+      sessionId: "session-1",
+      content: "summary-2",
+      createdAt: "2026-03-06T12:02:00.000Z"
+    });
+    harness.store.sessionSummaries.append({
+      sessionId: "session-1",
+      content: "summary-3",
+      createdAt: "2026-03-06T12:03:00.000Z"
+    });
+
+    const cleanup = harness.store.runCleanup({
+      approvalExpiryOlderThan: "2026-03-05T00:00:00.000Z",
+      approvalResolutionOlderThan: "2026-03-05T00:00:00.000Z",
+      maxAuditRows: 2,
+      maxSummariesPerSession: 1
+    });
+
+    assert.deepEqual(cleanup, {
+      deletedExpiredPermissions: 1,
+      deletedResolvedPermissions: 1,
+      deletedSummaryRows: 2,
+      deletedAuditRows: 1
+    });
+    assert.deepEqual(
+      harness.store.pendingPermissions.list().map((entry) => entry.permissionId).sort(),
+      ["perm-resolved-new"]
+    );
+    assert.deepEqual(
+      harness.store.auditLogs.list({ sessionId: "session-1" }).map((entry) => {
+        return (entry.payload as { note?: string } | null)?.note ?? null;
+      }),
+      ["audit-3", "audit-2"]
+    );
+    assert.deepEqual(
+      harness.store.sessionSummaries.list({ sessionId: "session-1", limit: 10 }).map((entry) => entry.content),
+      ["summary-3"]
     );
   } finally {
     await harness.dispose();

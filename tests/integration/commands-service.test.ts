@@ -25,6 +25,7 @@ test("commands service creates and binds a new session, then reports status", as
     assert.ok(stored);
     assert.equal(stored.cwd, "/workspaces/main/app");
     assert.equal(stored.mode, "code");
+    assert.equal(stored.accessScope, "workspace");
 
     const binding = harness.store.chatBindings.get("chat-1");
     assert.equal(binding?.sessionId, "session-1");
@@ -34,6 +35,38 @@ test("commands service creates and binds a new session, then reports status", as
     assert.match(status.message, /Bound to session-1/);
     assert.equal(status.data?.status.binding?.sessionId, "session-1");
     assert.equal(status.data?.status.session?.cwd, "/workspaces/main/app");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("commands service help lists commands with descriptions", async () => {
+  const harness = await createHarness();
+
+  try {
+    const help = await harness.commands.dispatch(createCommand("help"));
+    assert.equal(help.status, "ok");
+    assert.match(help.message, /\/cd <absolute_path> - Update the current session cwd\./);
+    assert.match(help.message, /\/scope \[workspace\|system\] - Show or change the current session access scope\./);
+    assert.match(help.message, /\/stat - Show the current bound session or Codex status summary\./);
+    assert.match(help.message, /\/help - Show this command reference\./);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("commands service help follows the resolved prompt language", async () => {
+  const harness = await createHarness({
+    languageResolver: () => "zh"
+  });
+
+  try {
+    const help = await harness.commands.dispatch(createCommand("help"));
+    assert.equal(help.status, "ok");
+    assert.match(help.message, /\/cd <absolute_path> - 修改当前 session 的 cwd。/);
+    assert.match(help.message, /\/scope \[workspace\|system\] - 查看或切换当前 session 的访问范围。/);
+    assert.match(help.message, /\/stat - 查看当前绑定 session 或 Codex 状态摘要。/);
+    assert.match(help.message, /\/help - 显示这份命令说明。/);
   } finally {
     await harness.dispose();
   }
@@ -337,7 +370,218 @@ test("commands service rejects /perm list when no session is bound", async () =>
   }
 });
 
+test("commands service status uses the injected codex status provider output", async () => {
+  const harness = await createHarness({
+    statusTextProvider: async () => [
+      "Model: gpt-5.4",
+      "Reasoning effort: xhigh",
+      "5-hour limit remaining (latest known): 85%",
+      "Weekly limit remaining (latest known): 96%"
+    ].join("\n")
+  });
+
+  try {
+    const status = await harness.commands.dispatch(createCommand("status"));
+    assert.equal(status.status, "ok");
+    assert.equal(status.message, [
+      "Model: gpt-5.4",
+      "Reasoning effort: xhigh",
+      "5-hour limit remaining (latest known): 85%",
+      "Weekly limit remaining (latest known): 96%"
+    ].join("\n"));
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("commands service reports and updates reasoning effort through the injected config service", async () => {
+  let currentEffort = "high";
+  const harness = await createHarness({
+    reasoningConfigService: {
+      supportedValues: ["minimal", "low", "medium", "high", "xhigh"],
+      getCurrentEffort() {
+        return currentEffort;
+      },
+      setCurrentEffort(value: string) {
+        currentEffort = value;
+      }
+    }
+  });
+
+  try {
+    const current = await harness.commands.dispatch(createCommand("reasoning"));
+    assert.equal(current.status, "ok");
+    assert.match(current.message, /Current reasoning effort: high\./);
+
+    const updated = await harness.commands.dispatch(createCommand("reasoning", {
+      args: ["xhigh"]
+    }));
+    assert.equal(updated.status, "ok");
+    assert.equal(updated.message, "Updated reasoning effort to xhigh. This applies to new Codex runs.");
+    assert.equal(currentEffort, "xhigh");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("commands service switches a bound session between workspace and system scope", async () => {
+  const harness = await createHarness();
+
+  try {
+    const created = await harness.commands.dispatch(createCommand("new"));
+    const sessionId = created.data?.sessionId;
+    assert.equal(sessionId, "session-1");
+
+    const current = await harness.commands.dispatch(createCommand("scope"));
+    assert.equal(current.status, "ok");
+    assert.equal(current.message, "Current access scope is workspace.");
+
+    const widened = await harness.commands.dispatch(createCommand("scope", {
+      args: ["system"]
+    }));
+    assert.equal(widened.status, "ok");
+    assert.equal(widened.message, "Updated access scope to system.");
+    assert.equal(harness.store.sessions.get(sessionId ?? "")?.accessScope, "system");
+
+    harness.store.sessions.update(sessionId ?? "", {
+      cwd: "/etc"
+    });
+
+    const narrowed = await harness.commands.dispatch(createCommand("scope", {
+      args: ["workspace"]
+    }));
+    assert.equal(narrowed.status, "ok");
+    assert.match(narrowed.message, /Cwd moved back to \/workspaces\/main/);
+    assert.equal(harness.store.sessions.get(sessionId ?? "")?.accessScope, "workspace");
+    assert.equal(harness.store.sessions.get(sessionId ?? "")?.cwd, DEFAULT_WORKSPACE_ROOT);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("commands service rejects unsupported reasoning effort values", async () => {
+  const harness = await createHarness({
+    reasoningConfigService: {
+      supportedValues: ["minimal", "low", "medium", "high", "xhigh"],
+      getCurrentEffort() {
+        return "high";
+      },
+      async setCurrentEffort() {
+        throw new Error("setCurrentEffort should not be called for invalid values.");
+      }
+    }
+  });
+
+  try {
+    const rejected = await harness.commands.dispatch(createCommand("reasoning", {
+      args: ["turbo"]
+    }));
+    assert.equal(rejected.status, "rejected");
+    assert.match(rejected.message, /Unsupported reasoning effort "turbo"/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("commands service prunes inactive unbound sessions and releases routing actors", async () => {
+  const harness = await createHarness();
+
+  try {
+    const created = await harness.commands.dispatch(createCommand("new"));
+    assert.equal(created.status, "ok");
+    assert.equal(created.data?.sessionId, "session-1");
+
+    harness.store.sessions.save({
+      sessionId: "session-keep",
+      workspaceRoot: DEFAULT_WORKSPACE_ROOT,
+      extraAllowedDirs: [],
+      cwd: DEFAULT_WORKSPACE_ROOT,
+      mode: "code",
+      accessScope: "workspace",
+      runState: "idle",
+      createdAt: "2026-03-06T16:40:00.000Z",
+      updatedAt: "2026-03-06T16:40:00.000Z"
+    });
+    harness.store.sessions.save({
+      sessionId: "session-old",
+      workspaceRoot: DEFAULT_WORKSPACE_ROOT,
+      extraAllowedDirs: [],
+      cwd: DEFAULT_WORKSPACE_ROOT,
+      mode: "code",
+      accessScope: "workspace",
+      runState: "failed",
+      createdAt: "2026-03-06T16:30:00.000Z",
+      updatedAt: "2026-03-06T16:30:00.000Z"
+    });
+    harness.store.sessions.save({
+      sessionId: "session-bound",
+      workspaceRoot: DEFAULT_WORKSPACE_ROOT,
+      extraAllowedDirs: [],
+      cwd: DEFAULT_WORKSPACE_ROOT,
+      mode: "code",
+      accessScope: "workspace",
+      runState: "idle",
+      createdAt: "2026-03-06T16:20:00.000Z",
+      updatedAt: "2026-03-06T16:20:00.000Z"
+    });
+    harness.store.sessions.save({
+      sessionId: "session-active",
+      workspaceRoot: DEFAULT_WORKSPACE_ROOT,
+      extraAllowedDirs: [],
+      cwd: DEFAULT_WORKSPACE_ROOT,
+      mode: "code",
+      accessScope: "workspace",
+      runState: "running",
+      activeRunId: "run-active",
+      createdAt: "2026-03-06T16:10:00.000Z",
+      updatedAt: "2026-03-06T16:10:00.000Z"
+    });
+    harness.store.chatBindings.save({
+      chatId: "chat-2",
+      sessionId: "session-bound"
+    });
+
+    harness.routing.registerSession("session-keep");
+    harness.routing.registerSession("session-old");
+
+    const pruned = await harness.commands.dispatch(createCommand("prune", {
+      args: ["1"]
+    }));
+    assert.equal(pruned.status, "ok");
+    assert.match(pruned.message, /Pruned 1 inactive unbound session\./);
+    assert.match(pruned.message, /Kept 1 newest inactive unbound session\./);
+    assert.match(pruned.message, /Skipped 2 bound and 1 active sessions\./);
+    assert.deepEqual(pruned.data?.deletedSessionIds, ["session-old"]);
+    assert.deepEqual(pruned.data?.keptSessionIds, ["session-keep"]);
+
+    assert.equal(harness.store.sessions.get("session-old"), null);
+    assert.ok(harness.store.sessions.get("session-keep"));
+    assert.ok(harness.store.sessions.get("session-bound"));
+    assert.ok(harness.store.sessions.get("session-active"));
+    assert.ok(harness.store.sessions.get("session-1"));
+    assert.equal(harness.routing.getSessionActor("session-old"), null);
+    assert.ok(harness.routing.getSessionActor("session-keep"));
+  } finally {
+    await harness.dispose();
+  }
+});
+
 async function createHarness(): Promise<{
+  readonly store: BridgeStore;
+  readonly routing: InMemoryRoutingCore;
+  readonly approval: ApprovalService;
+  readonly commands: CommandsService;
+  dispose(): Promise<void>;
+}>;
+async function createHarness(options: {
+  readonly statusTextProvider?: () => Promise<string> | string;
+  readonly languageResolver?: (userId: string) => "zh" | "en";
+  readonly reasoningConfigService?: {
+    readonly supportedValues: readonly string[];
+    getCurrentEffort(): Promise<string | null> | string | null;
+    setCurrentEffort(value: string): Promise<void> | void;
+  };
+} = {}): Promise<{
   readonly store: BridgeStore;
   readonly routing: InMemoryRoutingCore;
   readonly approval: ApprovalService;
@@ -357,7 +601,10 @@ async function createHarness(): Promise<{
     sessionIdFactory: () => "session-1",
     workspaceMutationOptions: {
       requireExistingPaths: false
-    }
+    },
+    ...(options.languageResolver ? { languageResolver: options.languageResolver } : {}),
+    ...(options.statusTextProvider ? { statusTextProvider: options.statusTextProvider } : {}),
+    ...(options.reasoningConfigService ? { reasoningConfigService: options.reasoningConfigService } : {})
   });
 
   return {
@@ -373,7 +620,7 @@ async function createHarness(): Promise<{
 }
 
 function createCommand(
-  command: "bind" | "new" | "status" | "stop" | "cwd" | "perm",
+  command: "bind" | "new" | "status" | "stop" | "cwd" | "perm" | "prune" | "reasoning" | "scope" | "help",
   extra: Record<string, unknown> = {}
 ) {
   return {

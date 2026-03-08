@@ -44,6 +44,12 @@ export class InMemoryRoutingCore {
     return this.actors.get(sessionId) ?? null;
   }
 
+  public deleteSession(sessionId: string): boolean {
+    const deleted = this.actors.delete(sessionId);
+    this.chatGate.deleteBindingsForSession(sessionId);
+    return deleted;
+  }
+
   public getChatBinding(chatId: string): ChatBindingSnapshot {
     return this.chatGate.getBinding(chatId);
   }
@@ -77,6 +83,13 @@ export class InMemoryRoutingCore {
         return this.handleNewCommand(command);
       case "stop":
         return this.routeStopCommand(command);
+      case "prune":
+      case "reasoning":
+        return {
+          binding: this.chatGate.getBinding(command.envelope.chatId),
+          sessionSnapshot: null,
+          effects: []
+        };
       default:
         return this.routeBoundCommand(command);
     }

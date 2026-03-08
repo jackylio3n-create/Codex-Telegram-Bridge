@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -9,6 +10,7 @@ import {
   redactConfigForDisplay,
   validateStartupEnvironment
 } from "../config/index.js";
+import { resolveRuntimeEnvironment } from "../config/env-file.js";
 import { createLogger } from "../logger/index.js";
 import { runDoctorCommand } from "../ops/doctor-command.js";
 import {
@@ -19,38 +21,62 @@ import {
   removePidFile,
   writePidFile
 } from "../runtime/bridge/index.js";
+import { parseSetupCommandArgs, runSetupCommand } from "./setup.js";
 
-type CommandName = "help" | "start" | "serve" | "stop" | "status" | "logs" | "doctor";
+type CommandName = "help" | "start" | "serve" | "stop" | "status" | "logs" | "doctor" | "setup";
 
 const HELP_TEXT = [
   "Codex + Telegram Bridge V1 daemon CLI",
   "",
   "Commands:",
   "  start    Validate config, then launch the bridge daemon in the background.",
+  "  serve    Run the bridge in the foreground (recommended for systemd).",
   "  stop     Stop the managed daemon if it is running.",
   "  status   Show daemon state, PID, poll health, and storage paths.",
   "  logs     Print the last 40 lines from the bridge log file.",
   "  doctor   Run configuration, storage, Telegram, Codex, and runtime diagnostics.",
+  "  setup    Interactively write an env file for a local deployment.",
   "  help     Show this message.",
+  "",
+  "Global options:",
+  "  --config-env-file <path>  Load configuration from a specific env file before running a command.",
+  "  --env-file <path>         Alias for built binaries; avoid this form with npm/tsx because Node reserves it.",
   "",
   "Environment variables:",
   "  CODEX_TELEGRAM_BRIDGE_APP_HOME",
   "  CODEX_TELEGRAM_BRIDGE_CODEX_HOME (falls back to CODEX_HOME)",
   "  CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT",
   "  CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN",
+  "  CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH",
   "  CODEX_TELEGRAM_BRIDGE_ALLOWED_TELEGRAM_USER_IDS",
+  "  CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID (recommended for self-use)",
+  "  CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID (optional hard lock)",
   "  CODEX_TELEGRAM_BRIDGE_LOG_LEVEL",
   "  CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE (optional)"
 ].join("\n");
 
 async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
-  const [rawCommand, ...args] = argv;
-  const command = normalizeCommand(rawCommand);
+  const parsed = parseMainArguments(argv);
+  const command = normalizeCommand(parsed.command);
+
+  if (command !== "help" && command !== "setup") {
+    const runtimeEnvironment = await resolveRuntimeEnvironment({
+      explicitEnvFilePath: parsed.envFilePath,
+      cwd: process.cwd(),
+      homeDir: homedir(),
+      baseEnv: process.env
+    });
+    applyRuntimeEnvironment(runtimeEnvironment.env);
+
+    if (runtimeEnvironment.envFilePath) {
+      process.stderr.write(`Using env file: ${runtimeEnvironment.envFilePath}\n`);
+    }
+  }
 
   switch (command) {
     case "help":
       process.stdout.write(`${HELP_TEXT}\n`);
-      return rawCommand && rawCommand !== "help" && rawCommand !== "--help" && rawCommand !== "-h" ? 1 : 0;
+      return parsed.command && parsed.command !== "help" && parsed.command !== "--help" && parsed.command !== "-h" ? 1 : 0;
     case "start":
       return runStart();
     case "serve":
@@ -60,9 +86,14 @@ async function main(argv: readonly string[] = process.argv.slice(2)): Promise<nu
     case "status":
       return runStatus();
     case "logs":
-      return runLogs(args);
+      return runLogs(parsed.args);
     case "doctor":
       return runDoctorCommand();
+    case "setup":
+      return runSetupCommand(parseSetupCommandArgs([
+        ...(parsed.envFilePath ? ["--env-file", parsed.envFilePath] : []),
+        ...parsed.args
+      ]));
   }
 }
 
@@ -78,9 +109,54 @@ function normalizeCommand(rawCommand: string | undefined): CommandName {
     case "status":
     case "logs":
     case "doctor":
+    case "setup":
       return rawCommand;
     default:
       return "help";
+  }
+}
+
+function parseMainArguments(argv: readonly string[]): {
+  readonly command: string | undefined;
+  readonly args: readonly string[];
+  readonly envFilePath: string | null;
+} {
+  let envFilePath: string | null = null;
+  const filteredArgs: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+    if (current === undefined) {
+      continue;
+    }
+
+    if (current === "--env-file" || current === "--config-env-file") {
+      const next = argv[index + 1];
+      if (!next) {
+        throw new Error(`Missing value for ${current}`);
+      }
+
+      envFilePath = next;
+      index += 1;
+      continue;
+    }
+
+    filteredArgs.push(current);
+  }
+
+  const [command, ...args] = filteredArgs;
+  return {
+    command,
+    args,
+    envFilePath
+  };
+}
+
+function applyRuntimeEnvironment(runtimeEnv: NodeJS.ProcessEnv): void {
+  for (const [key, value] of Object.entries(runtimeEnv)) {
+    if (value !== undefined) {
+      process.env[key] = value;
+    }
   }
 }
 
@@ -149,7 +225,10 @@ async function runServe(): Promise<number> {
     level: config.logLevel,
     console: false,
     filePath: config.paths.logFilePath,
-    redactValues: [config.telegramBotToken]
+    redactValues: [
+      config.telegramBotToken,
+      ...(config.verificationPasswordHash ? [config.verificationPasswordHash] : [])
+    ]
   });
   const runtime = await BridgeRuntime.create({
     config,

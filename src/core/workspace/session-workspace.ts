@@ -2,6 +2,7 @@ import {
   buildAllowedDirectorySet,
   normalizeContainerPath,
   validateWorkspaceSession,
+  type SessionAccessScope,
   type WorkspaceValidationResult,
   type FilesystemInspector,
   type SessionMode,
@@ -41,11 +42,16 @@ export interface RuntimeWorkspaceContext {
   readonly writableRoots: readonly string[];
   readonly extraAllowedDirs: readonly string[];
   readonly mode: SessionMode;
+  readonly accessScope: SessionAccessScope;
 }
 
 interface AddDirCandidate {
   readonly session: WorkspaceSessionState;
   readonly addedField: string | null;
+}
+
+export interface AccessScopeMutationResult extends WorkspaceMutationResult {
+  readonly fallbackCwdApplied: boolean;
 }
 
 export async function initializeNewSessionWorkspace(
@@ -59,7 +65,8 @@ export async function initializeNewSessionWorkspace(
     workspaceRoot,
     extraAllowedDirs: [],
     cwd: requestedCwd || workspaceRoot,
-    mode: "code"
+    mode: "code",
+    accessScope: "workspace"
   };
 
   const validation = await validateWorkspaceCandidate(initialSession, options);
@@ -101,6 +108,57 @@ export async function applyCwdChange(
   };
 
   return validateWorkspaceMutation(session, nextSession, options);
+}
+
+export async function applyAccessScopeChange(
+  session: WorkspaceSessionState,
+  requestedScope: SessionAccessScope,
+  options: WorkspaceMutationOptions = {}
+): Promise<AccessScopeMutationResult> {
+  const nextSession: WorkspaceSessionState = {
+    ...session,
+    accessScope: requestedScope
+  };
+
+  const validation = await validateWorkspaceCandidate(nextSession, options);
+  if (!hasBlockingIssues(validation.issues)) {
+    return {
+      ok: true,
+      session: validation.session,
+      issues: validation.issues,
+      fallbackCwdApplied: false
+    };
+  }
+
+  if (requestedScope !== "workspace" || !hasOnlyCwdScopeIssues(validation.issues)) {
+    return {
+      ok: false,
+      session,
+      issues: validation.issues,
+      fallbackCwdApplied: false
+    };
+  }
+
+  const fallbackSession: WorkspaceSessionState = {
+    ...validation.session,
+    cwd: validation.session.workspaceRoot
+  };
+  const fallbackValidation = await validateWorkspaceCandidate(fallbackSession, options);
+
+  return {
+    ok: !hasBlockingIssues(fallbackValidation.issues),
+    session: fallbackValidation.session,
+    issues: [
+      ...validation.issues,
+      {
+        code: "path_outside_allowed_set",
+        field: "scope",
+        message: `Switching back to workspace scope reset cwd to workspace_root: ${validation.session.workspaceRoot}.`
+      },
+      ...fallbackValidation.issues
+    ],
+    fallbackCwdApplied: true
+  };
 }
 
 export async function prepareAddDirConfirmation(
@@ -180,7 +238,8 @@ export function buildRuntimeWorkspaceContext(session: WorkspaceSessionState): Ru
     workspaceRoot: session.workspaceRoot,
     writableRoots: buildAllowedDirectorySet(session),
     extraAllowedDirs: [...session.extraAllowedDirs],
-    mode: session.mode
+    mode: session.mode,
+    accessScope: session.accessScope
   };
 }
 
@@ -248,6 +307,11 @@ function filterIssuesByFields(
 
 function getBlockingIssues(issues: readonly WorkspaceIssue[]): readonly WorkspaceIssue[] {
   return issues.filter((issue) => issue.code !== "path_not_normalized");
+}
+
+function hasOnlyCwdScopeIssues(issues: readonly WorkspaceIssue[]): boolean {
+  const blockingIssues = getBlockingIssues(issues);
+  return blockingIssues.length > 0 && blockingIssues.every((issue) => issue.field === "cwd");
 }
 
 async function validateWorkspaceCandidate(

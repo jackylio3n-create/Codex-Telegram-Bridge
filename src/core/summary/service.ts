@@ -128,7 +128,7 @@ function formatRollingSummary(snapshot: RollingSummarySnapshot): string {
     `- Run state: ${snapshot.runState}`,
     `- Active run ID: ${snapshot.activeRunId ?? "none"}`,
     `- Codex thread ID: ${snapshot.codexThreadId ?? "none"}`,
-    `- Last error: ${snapshot.lastError ?? "none"}`,
+    `- Last error: ${snapshot.lastError ? "present" : "none"}`,
     `- Stale recovered: ${snapshot.staleRecovered ? "yes" : "no"}`,
     "",
     "Pending Approvals",

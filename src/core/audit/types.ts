@@ -8,8 +8,9 @@ export interface AuditActorContext {
 
 export interface UserInputAuditPayload {
   readonly contentType: "text" | "image";
-  readonly preview: string;
+  readonly messageLength: number;
   readonly viaDocument?: boolean;
+  readonly hasCaption?: boolean;
 }
 
 export interface UserCommandAuditPayload {
@@ -25,7 +26,6 @@ export interface ApprovalDecisionAuditPayload {
 }
 
 export interface AgentTextAuditPayload {
-  readonly preview: string;
   readonly messageLength: number;
 }
 
@@ -44,11 +44,12 @@ export interface ToolResultAuditPayload {
 export interface FileChangeAuditPayload {
   readonly changeType: "cwd" | "adddir" | "workspace_root";
   readonly previousPath?: string | null;
-  readonly nextPath: string;
+  readonly nextPath?: string;
 }
 
 export interface ShellExecAuditPayload {
-  readonly commandPreview: string;
+  readonly commandPreview?: string;
+  readonly commandWordCount?: number;
   readonly exitCode: number | null;
 }
 
@@ -64,8 +65,8 @@ export interface RunCancelAuditPayload {
 }
 
 export interface ResumeRecoveryAuditPayload {
-  readonly previousThreadId: string | null;
-  readonly nextThreadId: string | null;
+  readonly previousThreadId?: string | null;
+  readonly nextThreadId?: string | null;
   readonly usedSummarySeed: boolean;
   readonly reason: string;
 }

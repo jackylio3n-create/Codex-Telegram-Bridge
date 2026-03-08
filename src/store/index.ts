@@ -9,6 +9,7 @@ import {
   SqlitePendingPermissionsRepository,
   SqliteSessionSummariesRepository,
   SqliteSessionsRepository,
+  SqliteTelegramUserAuthRepository,
   type StoreClock
 } from "./repositories.js";
 import type { BridgeStore, CleanupPolicy, CleanupResult } from "./types.js";
@@ -53,6 +54,7 @@ class SqliteBridgeStore implements BridgeStore {
   readonly chatBindings;
   readonly pendingPermissions;
   readonly channelOffsets;
+  readonly telegramUserAuth;
   readonly auditLogs;
   readonly sessionSummaries;
   readonly migrations;
@@ -65,6 +67,7 @@ class SqliteBridgeStore implements BridgeStore {
     this.chatBindings = new SqliteChatBindingsRepository(database, clock);
     this.pendingPermissions = new SqlitePendingPermissionsRepository(database, clock);
     this.channelOffsets = new SqliteChannelOffsetsRepository(database, clock);
+    this.telegramUserAuth = new SqliteTelegramUserAuthRepository(database, clock);
     this.auditLogs = new SqliteAuditLogsRepository(database, clock);
     this.sessionSummaries = new SqliteSessionSummariesRepository(database, clock);
     this.migrations = new SqliteMigrationRepository(database);

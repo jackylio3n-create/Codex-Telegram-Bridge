@@ -35,6 +35,20 @@ export class ChatGate {
     };
   }
 
+  public deleteBindingsForSession(sessionId: string): readonly string[] {
+    const deletedChatIds: string[] = [];
+    for (const [chatId, boundSessionId] of this.bindings.entries()) {
+      if (boundSessionId !== sessionId) {
+        continue;
+      }
+
+      this.bindings.delete(chatId);
+      deletedChatIds.push(chatId);
+    }
+
+    return deletedChatIds;
+  }
+
   public async bindExistingSession(
     request: BindChatSessionRequest,
     actors: ReadonlyMap<string, SessionActor>
