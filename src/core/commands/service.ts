@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { PromptLanguage } from "../../i18n.js";
 import { selectText } from "../../i18n.js";
 import { ApprovalService } from "../approval/index.js";
-import { isSessionStateActiveForCommandGate } from "../session/index.js";
+import {
+  buildPersistedSessionActorSnapshot,
+  isSessionStateActiveForCommandGate,
+  toWorkspaceSessionState
+} from "../session/index.js";
 import type {
   CommandRejectedEffect,
   NormalizedApprovalDecision,
@@ -334,7 +338,7 @@ export class CommandsService {
       };
     }
 
-    this.#routing.registerSession(command.targetSessionId, this.#buildSessionActorSnapshot(session));
+    this.#routing.registerSession(command.targetSessionId, buildPersistedSessionActorSnapshot(this.#store, session));
     const routed = await this.#routing.dispatch(command);
     const rejected = this.#findCommandRejection(routed.effects);
     if (rejected) {
@@ -376,7 +380,7 @@ export class CommandsService {
     const { session } = resolved.context;
 
     const result = await applyCwdChange(
-      this.#toWorkspaceSession(session),
+      toWorkspaceSessionState(session),
       command.path,
       this.#workspaceMutationOptions
     );
@@ -422,7 +426,7 @@ export class CommandsService {
     const { session } = resolved.context;
 
     const requested = await prepareAddDirConfirmation(
-      this.#toWorkspaceSession(session),
+      toWorkspaceSessionState(session),
       command.path,
       this.#workspaceMutationOptions
     );
@@ -518,7 +522,7 @@ export class CommandsService {
     }
 
     const result = await applyAccessScopeChange(
-      this.#toWorkspaceSession(session),
+      toWorkspaceSessionState(session),
       parsed.scope,
       this.#workspaceMutationOptions
     );
@@ -972,7 +976,7 @@ export class CommandsService {
       return null;
     }
 
-    return this.#routing.registerSession(sessionId, this.#buildSessionActorSnapshot(session));
+    return this.#routing.registerSession(sessionId, buildPersistedSessionActorSnapshot(this.#store, session));
   }
 
   #syncRoutingBinding(chatId: string, sessionId: string): void {
@@ -981,45 +985,6 @@ export class CommandsService {
     }
 
     this.#routing.bindChat(chatId, sessionId);
-  }
-
-  #buildSessionActorSnapshot(session: SessionRecord): SessionActorSnapshot {
-    const currentRunId = this.#getPersistedCurrentRunId(session);
-    const waitingPermissionId = session.runState === "waiting_approval" && currentRunId
-      ? this.#store.pendingPermissions.list({
-          sessionId: session.sessionId,
-          runId: currentRunId,
-          resolved: false,
-          limit: 1
-        })[0]?.permissionId ?? null
-      : null;
-
-    return {
-      sessionId: session.sessionId,
-      runState: session.runState,
-      currentRunId,
-      waitingPermissionId,
-      cancellationResult: session.cancellationResult,
-      queuedEventCount: 0,
-      processedEventCount: 0,
-      lastEventAt: session.updatedAt
-    };
-  }
-
-  #getPersistedCurrentRunId(session: SessionRecord): string | null {
-    return isSessionStateActiveForCommandGate(session.runState)
-      ? session.activeRunId
-      : null;
-  }
-
-  #toWorkspaceSession(session: SessionRecord): WorkspaceSessionState {
-    return {
-      workspaceRoot: session.workspaceRoot,
-      extraAllowedDirs: session.extraAllowedDirs,
-      cwd: session.cwd,
-      mode: session.mode,
-      accessScope: session.accessScope
-    };
   }
 
   #toSessionUpsertInput(sessionId: string, session: WorkspaceSessionState): SessionUpsertInput {

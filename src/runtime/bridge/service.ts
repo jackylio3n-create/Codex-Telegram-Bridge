@@ -8,7 +8,11 @@ import { AuditService } from "../../core/audit/index.js";
 import { CommandsService } from "../../core/commands/index.js";
 import type { CommandExecutionResult } from "../../core/commands/types.js";
 import { InMemoryRoutingCore } from "../../core/router/index.js";
-import { isSessionStateActiveForCommandGate } from "../../core/session/index.js";
+import {
+  buildPersistedSessionActorSnapshot,
+  isSessionStateActiveForCommandGate,
+  toWorkspaceSessionState
+} from "../../core/session/index.js";
 import { SummaryService } from "../../core/summary/index.js";
 import type {
   ImageUserInput,
@@ -243,6 +247,7 @@ export class BridgeRuntime {
 
   static async create(options: BridgeRuntimeOptions): Promise<BridgeRuntime> {
     const clock = options.clock ?? (() => new Date());
+    const filesystemInspector = options.filesystemInspector ?? createNodeFilesystemInspector();
     const logger = options.logger ?? createLogger({
       name: options.config.appName,
       level: options.config.logLevel,
@@ -267,11 +272,11 @@ export class BridgeRuntime {
       codexExecutablePath: options.codexExecutablePath ?? process.env.CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE ?? "codex",
       ...(options.codexEnvironment ? { codexEnvironment: options.codexEnvironment } : {}),
       workspaceMutationOptions: {
-        inspector: options.filesystemInspector ?? createNodeFilesystemInspector(),
+        inspector: filesystemInspector,
         ...(options.visiblePolicy ? { visiblePolicy: options.visiblePolicy } : {}),
         ...(options.workspaceMutationOptions ?? {})
       },
-      filesystemInspector: options.filesystemInspector ?? createNodeFilesystemInspector(),
+      filesystemInspector,
       ...(options.visiblePolicy ? { visiblePolicy: options.visiblePolicy } : {})
     });
   }
@@ -378,11 +383,16 @@ export class BridgeRuntime {
 
   async #hydrateFromStore(): Promise<void> {
     const unresolved = this.#store.pendingPermissions.list({ resolved: false });
-    const unresolvedBySessionRun = new Map<string, readonly PendingPermissionRecord[]>();
+    const unresolvedBySessionRun = new Map<string, PendingPermissionRecord[]>();
     for (const permission of unresolved) {
       const key = createSessionRunKey(permission.sessionId, permission.runId);
-      const existing = unresolvedBySessionRun.get(key);
-      unresolvedBySessionRun.set(key, existing ? [...existing, permission] : [permission]);
+      let existing = unresolvedBySessionRun.get(key);
+      if (!existing) {
+        existing = [];
+        unresolvedBySessionRun.set(key, existing);
+      }
+
+      existing.push(permission);
     }
 
     for (const session of this.#store.sessions.list()) {
@@ -404,7 +414,7 @@ export class BridgeRuntime {
         }
       }
 
-      this.#routing.registerSession(session.sessionId, buildSessionActorSnapshot(this.#store, normalized));
+      this.#routing.registerSession(session.sessionId, buildPersistedSessionActorSnapshot(this.#store, normalized));
     }
 
     for (const binding of this.#store.chatBindings.list()) {
@@ -612,7 +622,9 @@ export class BridgeRuntime {
   async #handleApprovalDecisionEnvelope(decision: NormalizedApprovalDecision): Promise<void> {
     const persistedSession = this.#store.sessions.get(decision.sessionId);
     const sessionSnapshot = this.#routing.getSessionSnapshot(decision.sessionId)
-      ?? (persistedSession ? this.#routing.registerSession(decision.sessionId, buildSessionActorSnapshot(this.#store, persistedSession)) : null);
+      ?? (persistedSession
+        ? this.#routing.registerSession(decision.sessionId, buildPersistedSessionActorSnapshot(this.#store, persistedSession))
+        : null);
     const resolution = this.#approval.resolveDecision({
       permissionId: decision.permissionId,
       decision: decision.decision,
@@ -739,7 +751,7 @@ export class BridgeRuntime {
 
     this.#pendingAddDirConfirmations.delete(key);
     const confirmed = await confirmAddDir(
-      toWorkspaceSession(session),
+      toWorkspaceSessionState(session),
       pending.confirmation,
       this.#workspaceMutationOptions
     );
@@ -893,7 +905,7 @@ export class BridgeRuntime {
         : this.#tChat(input.envelope.chatId, "正在运行 Codex...", "Running Codex...")
     );
 
-    const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSession(session));
+    const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSessionState(session));
     const images: string[] = [];
     if (input.contentType === "image") {
       const downloaded = await this.#downloadInboundImage(input);
@@ -1321,7 +1333,7 @@ export class BridgeRuntime {
       return;
     }
 
-    const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSession(session));
+    const runtimeWorkspace = buildRuntimeWorkspaceContext(toWorkspaceSessionState(session));
     const continuationPrompt = buildApprovalResumePrompt(activeRun.pendingApproval.summary);
 
     let resumedRun!: ActiveRunContext;
@@ -1479,7 +1491,7 @@ export class BridgeRuntime {
   }
 
   async #validateSessionForRun(session: SessionRecord): Promise<string | null> {
-    const validation = await validateWorkspaceSession(toWorkspaceSession(session), {
+    const validation = await validateWorkspaceSession(toWorkspaceSessionState(session), {
       inspector: this.#filesystemInspector,
       ...(this.#visiblePolicy ? { visiblePolicy: this.#visiblePolicy } : {}),
       requireExistingPaths: true
@@ -1568,43 +1580,8 @@ export class BridgeRuntime {
   }
 }
 
-function buildSessionActorSnapshot(store: BridgeStore, session: SessionRecord): SessionActorSnapshot {
-  const currentRunId = isSessionStateActiveForCommandGate(session.runState)
-    ? session.activeRunId
-    : null;
-  const waitingPermissionId = session.runState === "waiting_approval" && currentRunId
-    ? store.pendingPermissions.list({
-        sessionId: session.sessionId,
-        runId: currentRunId,
-        resolved: false,
-        limit: 1
-      })[0]?.permissionId ?? null
-    : null;
-
-  return {
-    sessionId: session.sessionId,
-    runState: session.runState,
-    currentRunId,
-    waitingPermissionId,
-    cancellationResult: session.cancellationResult,
-    queuedEventCount: 0,
-    processedEventCount: 0,
-    lastEventAt: session.updatedAt
-  };
-}
-
 function createSessionRunKey(sessionId: string, runId: string): string {
   return `${sessionId}\u0000${runId}`;
-}
-
-function toWorkspaceSession(session: SessionRecord): WorkspaceSessionState {
-  return {
-    workspaceRoot: session.workspaceRoot,
-    extraAllowedDirs: session.extraAllowedDirs,
-    cwd: session.cwd,
-    mode: session.mode,
-    accessScope: session.accessScope
-  };
 }
 
 function createAddDirConfirmationKey(chatId: string, userId: string, sessionId: string, path: string): string {

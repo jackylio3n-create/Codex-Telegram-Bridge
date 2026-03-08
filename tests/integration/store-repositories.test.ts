@@ -39,6 +39,39 @@ test("sessions.save and sessions.update return the persisted record shape withou
   }
 });
 
+test("sessions.update snapshots updatedAt once when no explicit timestamp is provided", async () => {
+  let clockCalls = 0;
+  const harness = await createStoreHarness({
+    clock: () => {
+      clockCalls += 1;
+      return new Date("2026-03-06T12:05:00.000Z");
+    }
+  });
+
+  try {
+    harness.store.sessions.save({
+      sessionId: "session-1",
+      workspaceRoot: "/workspaces/main",
+      extraAllowedDirs: [],
+      cwd: "/workspaces/main",
+      mode: "code",
+      accessScope: "workspace",
+      createdAt: "2026-03-06T12:00:00.000Z",
+      updatedAt: "2026-03-06T12:00:00.000Z"
+    });
+    const clockCallsBeforeUpdate = clockCalls;
+
+    const updated = harness.store.sessions.update("session-1", {
+      cwd: "/workspaces/next"
+    });
+
+    assert.equal(clockCalls - clockCallsBeforeUpdate, 1);
+    assert.equal(updated.updatedAt, "2026-03-06T12:05:00.000Z");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("sessions.listOverview returns lightweight rows ordered without hydrating rolling summaries", async () => {
   const harness = await createStoreHarness();
 
@@ -579,13 +612,16 @@ test("store runCleanup prunes historical approvals, audit rows, and summaries to
   }
 });
 
-async function createStoreHarness(): Promise<{
+async function createStoreHarness(options: {
+  readonly clock?: () => Date;
+} = {}): Promise<{
   readonly store: BridgeStore;
   dispose(): Promise<void>;
 }> {
   const tempRoot = await mkdtemp(join(tmpdir(), "codex-telegram-bridge-store-"));
   const store = await createBridgeStore({
-    databaseFilePath: join(tempRoot, "bridge.sqlite3")
+    databaseFilePath: join(tempRoot, "bridge.sqlite3"),
+    ...(options.clock ? { clock: options.clock } : {})
   });
 
   return {

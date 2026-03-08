@@ -11,16 +11,24 @@ import type {
 import type { RollingSummaryResult, RollingSummarySnapshot } from "./types.js";
 
 const SUMMARY_PENDING_APPROVAL_LIMIT = 5;
-const SUMMARY_AUDIT_EVENT_LIMITS = [
-  { eventType: "approval_decision", limit: 5 },
-  { eventType: "user_command", limit: 5 },
-  { eventType: "file_change", limit: 5 },
-  { eventType: "run_cancel", limit: 2 },
-  { eventType: "resume_recovery", limit: 2 }
-] as const satisfies readonly AuditLogEventLimit[];
+const SUMMARY_AUDIT_SECTIONS = [
+  { eventType: "approval_decision", snapshotKey: "recentApprovalDecisions", limit: 5 },
+  { eventType: "user_command", snapshotKey: "recentCommands", limit: 5 },
+  { eventType: "file_change", snapshotKey: "recentBoundaryChanges", limit: 5 },
+  { eventType: "run_cancel", snapshotKey: "recentRunCancels", limit: 2 },
+  { eventType: "resume_recovery", snapshotKey: "recentResumeRecoveries", limit: 2 }
+] as const;
+const SUMMARY_AUDIT_EVENT_LIMITS = SUMMARY_AUDIT_SECTIONS.map(({ eventType, limit }) => ({
+  eventType,
+  limit
+})) as readonly AuditLogEventLimit[];
 const SUMMARY_TRIGGER_EVENT_TYPES = new Set(
   [...SUMMARY_AUDIT_EVENT_LIMITS.map((entry) => entry.eventType), "agent_text"]
 );
+
+type SummaryAuditSection = typeof SUMMARY_AUDIT_SECTIONS[number];
+type SummaryAuditSectionKey = SummaryAuditSection["snapshotKey"];
+type SummaryAuditCollections = Record<SummaryAuditSectionKey, string[]>;
 
 export interface SummaryServiceOptions {
   readonly clock?: () => Date;
@@ -171,59 +179,49 @@ function collectRecentAuditSections(records: readonly AuditLogRecord[]): {
   readonly recentRunCancels: readonly string[];
   readonly recentResumeRecoveries: readonly string[];
 } {
-  const recentApprovalDecisions: string[] = [];
-  const recentCommands: string[] = [];
-  const recentBoundaryChanges: string[] = [];
-  const recentRunCancels: string[] = [];
-  const recentResumeRecoveries: string[] = [];
+  const collected = createSummaryAuditCollections();
+  const sectionByEventType = new Map<string, SummaryAuditSection>(
+    SUMMARY_AUDIT_SECTIONS.map((section) => [section.eventType, section])
+  );
 
   for (const record of records) {
-    const formatted = formatAuditEvent(record);
-
-    switch (record.eventType) {
-      case "approval_decision":
-        pushWithinLimit(recentApprovalDecisions, formatted, 5);
-        break;
-      case "user_command":
-        pushWithinLimit(recentCommands, formatted, 5);
-        break;
-      case "file_change":
-        pushWithinLimit(recentBoundaryChanges, formatted, 5);
-        break;
-      case "run_cancel":
-        pushWithinLimit(recentRunCancels, formatted, 2);
-        break;
-      case "resume_recovery":
-        pushWithinLimit(recentResumeRecoveries, formatted, 2);
-        break;
-      default:
-        break;
+    const section = sectionByEventType.get(record.eventType);
+    if (!section) {
+      continue;
     }
 
-    if (
-      recentApprovalDecisions.length >= 5 &&
-      recentCommands.length >= 5 &&
-      recentBoundaryChanges.length >= 5 &&
-      recentRunCancels.length >= 2 &&
-      recentResumeRecoveries.length >= 2
-    ) {
+    const entries = collected[section.snapshotKey];
+    if (entries.length >= section.limit) {
+      continue;
+    }
+
+    entries.push(formatAuditEvent(record));
+    if (haveCollectedAllSummaryAuditSections(collected)) {
       break;
     }
   }
 
   return {
-    recentApprovalDecisions,
-    recentCommands,
-    recentBoundaryChanges,
-    recentRunCancels,
-    recentResumeRecoveries
+    recentApprovalDecisions: collected.recentApprovalDecisions,
+    recentCommands: collected.recentCommands,
+    recentBoundaryChanges: collected.recentBoundaryChanges,
+    recentRunCancels: collected.recentRunCancels,
+    recentResumeRecoveries: collected.recentResumeRecoveries
   };
 }
 
-function pushWithinLimit(entries: string[], value: string, limit: number): void {
-  if (entries.length < limit) {
-    entries.push(value);
-  }
+function createSummaryAuditCollections(): SummaryAuditCollections {
+  return {
+    recentApprovalDecisions: [],
+    recentCommands: [],
+    recentBoundaryChanges: [],
+    recentRunCancels: [],
+    recentResumeRecoveries: []
+  };
+}
+
+function haveCollectedAllSummaryAuditSections(collected: SummaryAuditCollections): boolean {
+  return SUMMARY_AUDIT_SECTIONS.every((section) => collected[section.snapshotKey].length >= section.limit);
 }
 
 function formatAuditEvent(record: AuditLogRecord): string {

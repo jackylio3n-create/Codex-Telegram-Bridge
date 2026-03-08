@@ -153,7 +153,7 @@ export function startCodexRun(options: CodexStartRunOptions): CodexRunController
         result,
         exited: result !== "unknown"
       };
-        return cancelOutcome;
+      return cancelOutcome;
     }
   };
 }
@@ -261,39 +261,54 @@ function buildCodexArgs(
 
   if (resumeThreadId) {
     args.push("resume", resumeThreadId);
-    args.push("--json");
-    if (options.skipGitRepoCheck ?? true) {
-      args.push("--skip-git-repo-check");
-    }
-    args.push("-c", `approval_policy="${policy.approval}"`);
-    args.push("-c", `sandbox_mode="${policy.sandbox}"`);
-    for (const imagePath of options.images ?? []) {
-      args.push("-i", imagePath);
-    }
+    appendSharedExecArgs(args, options, policy);
     args.push("-");
     return args;
   }
 
-  args.push("--json");
-
-  if (options.skipGitRepoCheck ?? true) {
-    args.push("--skip-git-repo-check");
-  }
-
+  appendSharedExecPrelude(args, options);
   args.push("-C", options.runtimeContext.cwd);
-  args.push("-c", `approval_policy="${policy.approval}"`);
-  args.push("-c", `sandbox_mode="${policy.sandbox}"`);
+  appendSharedExecConfig(args, options, policy);
 
   for (const extraDir of options.runtimeContext.extraWritableRoots) {
     args.push("--add-dir", extraDir);
   }
 
+  args.push("-");
+  return args;
+}
+
+function appendSharedExecArgs(
+  args: string[],
+  options: CodexStartRunOptions,
+  policy: ReturnType<typeof getCodexModePolicy>
+): void {
+  appendSharedExecPrelude(args, options);
+  appendSharedExecConfig(args, options, policy);
+}
+
+function appendSharedExecPrelude(
+  args: string[],
+  options: CodexStartRunOptions
+): void {
+  args.push("--json");
+
+  if (options.skipGitRepoCheck ?? true) {
+    args.push("--skip-git-repo-check");
+  }
+}
+
+function appendSharedExecConfig(
+  args: string[],
+  options: CodexStartRunOptions,
+  policy: ReturnType<typeof getCodexModePolicy>
+): void {
+  args.push("-c", `approval_policy="${policy.approval}"`);
+  args.push("-c", `sandbox_mode="${policy.sandbox}"`);
+
   for (const imagePath of options.images ?? []) {
     args.push("-i", imagePath);
   }
-
-  args.push("-");
-  return args;
 }
 
 async function requestSoftCancellation(

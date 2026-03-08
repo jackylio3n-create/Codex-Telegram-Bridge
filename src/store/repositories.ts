@@ -93,6 +93,7 @@ export class SqliteSessionsRepository implements SessionsRepository {
 
   update(sessionId: string, patch: SessionPatch): SessionRecord {
     const existing = this.getRequired(sessionId);
+    const updatedAt = patch.updatedAt ?? this.#now();
     const record = createSessionRecord({
       sessionId: existing.sessionId,
       workspaceRoot: patch.workspaceRoot ?? existing.workspaceRoot,
@@ -108,8 +109,8 @@ export class SqliteSessionsRepository implements SessionsRepository {
       staleRecovered: patch.staleRecovered ?? existing.staleRecovered,
       lastError: getNullableSessionValue(patch, "lastError", existing.lastError),
       createdAt: existing.createdAt,
-      updatedAt: patch.updatedAt ?? this.#now()
-    }, existing, existing.createdAt, patch.updatedAt ?? this.#now());
+      updatedAt
+    }, existing, existing.createdAt, updatedAt);
 
     this.#persistSessionRecord(record);
     return record;

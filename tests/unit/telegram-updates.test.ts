@@ -296,8 +296,42 @@ test("mapTelegramUpdateToInbound silently drops callbacks from banned users", as
   assert.equal(dependencies.answeredCallbacks.length, 0);
 });
 
+test("mapTelegramUpdateToInbound reuses access checks for callbacks and answers stale on owner mismatch", async () => {
+  const dependencies = createDependencies({
+    ownerUserId: "999"
+  });
+
+  const result = await mapTelegramUpdateToInbound(
+    {
+      update_id: 11,
+      callback_query: {
+        id: "callback-owner-mismatch",
+        data: "pa:perm-1",
+        from: {
+          id: 456,
+          is_bot: false,
+          first_name: "Tester"
+        },
+        message: {
+          ...createBaseMessage(),
+          message_id: 11,
+          text: "approval request"
+        }
+      }
+    },
+    dependencies
+  );
+
+  assert.equal(result.kind, "ignored");
+  assert.equal(result.ignored.reason, "owner_not_allowed");
+  assert.equal(dependencies.answeredCallbacks[0]?.callbackQueryId, "callback-owner-mismatch");
+  assert.equal(dependencies.answeredCallbacks[0]?.text, "Expired or already handled.");
+});
+
 function createDependencies(options: {
   readonly verificationPasswordHash?: string | null;
+  readonly ownerUserId?: string | null;
+  readonly ownerChatId?: string | null;
 } = {}) {
   const authState = new InMemoryTelegramUserAuthRepository();
   const sentMessages: Array<{ readonly chatId: string; readonly text: string }> = [];
@@ -306,8 +340,8 @@ function createDependencies(options: {
   return {
     allowedUserIds: new Set(["456"]),
     verificationPasswordHash: options.verificationPasswordHash ?? null,
-    ownerUserId: null,
-    ownerChatId: null,
+    ownerUserId: options.ownerUserId ?? null,
+    ownerChatId: options.ownerChatId ?? null,
     store: {
       pendingPermissions: {
         get() {

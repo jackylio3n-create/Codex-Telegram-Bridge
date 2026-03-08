@@ -32,6 +32,16 @@ interface TelegramUpdateMapperDependencies {
   readonly callbackStaleText: string;
 }
 
+interface TelegramAccessContext {
+  readonly senderId: string;
+  readonly chatId: string;
+}
+
+interface TelegramAccessFailure {
+  readonly reason: TelegramIgnoredUpdateResult["ignored"]["reason"];
+  readonly detail: string;
+}
+
 const DEFAULT_CALLBACK_RECEIVED_TEXT = "Received.";
 const DEFAULT_CALLBACK_STALE_TEXT = "Expired or already handled.";
 const VERIFICATION_BAN_THRESHOLD = 5;
@@ -149,26 +159,23 @@ async function mapTelegramMessageUpdate(
     return ignored(updateId, "missing_sender", "Telegram message is missing the sender.");
   }
 
-  if (message.chat.type !== "private") {
-    return ignored(updateId, "non_private_chat", "Only private chats are supported in V1.");
+  const accessContext = resolveTelegramAccessContext({
+    chatType: message.chat.type,
+    senderId: sender.id,
+    chatId: message.chat.id,
+    dependencies
+  });
+  if (!accessContext.ok) {
+    return ignored(updateId, accessContext.reason, accessContext.detail);
   }
 
-  const senderId = String(sender.id);
-  const chatId = String(message.chat.id);
-
-  if (!dependencies.allowedUserIds.has(senderId)) {
-    return ignored(updateId, "user_not_allowed", `Telegram user ${sender.id} is not allowlisted.`);
-  }
-
-  if (dependencies.ownerUserId && senderId !== dependencies.ownerUserId) {
-    return ignored(updateId, "owner_not_allowed", `Telegram user ${sender.id} is not the configured owner.`);
-  }
-
-  if (dependencies.ownerChatId && chatId !== dependencies.ownerChatId) {
-    return ignored(updateId, "owner_chat_mismatch", `Telegram chat ${message.chat.id} is not the configured owner chat.`);
-  }
-
-  const verificationGateResult = await handleVerificationMessageGate(updateId, message, senderId, chatId, dependencies);
+  const verificationGateResult = await handleVerificationMessageGate(
+    updateId,
+    message,
+    accessContext.senderId,
+    accessContext.chatId,
+    dependencies
+  );
   if (verificationGateResult) {
     return verificationGateResult;
   }
@@ -184,8 +191,8 @@ async function mapTelegramMessageUpdate(
     envelope: {
       updateId,
       messageId: String(message.message_id),
-      chatId,
-      userId: senderId,
+      chatId: accessContext.chatId,
+      userId: accessContext.senderId,
       inboundMessage
     }
   };
@@ -208,48 +215,22 @@ async function mapTelegramCallbackQuery(
     );
   }
 
-  if (message.chat.type !== "private") {
+  const accessContext = resolveTelegramAccessContext({
+    chatType: message.chat.type,
+    senderId: callbackQuery.from.id,
+    chatId: message.chat.id,
+    dependencies
+  });
+  if (!accessContext.ok) {
     return answerStaleCallback(
       updateId,
       callbackQuery.id,
-      "non_private_chat",
-      "Only private chats are supported in V1.",
+      accessContext.reason,
+      accessContext.detail,
       dependencies
     );
   }
-
-  const senderId = String(callbackQuery.from.id);
-  const chatId = String(message.chat.id);
-
-  if (!dependencies.allowedUserIds.has(senderId)) {
-    return answerStaleCallback(
-      updateId,
-      callbackQuery.id,
-      "user_not_allowed",
-      `Telegram user ${callbackQuery.from.id} is not allowlisted.`,
-      dependencies
-    );
-  }
-
-  if (dependencies.ownerUserId && senderId !== dependencies.ownerUserId) {
-    return answerStaleCallback(
-      updateId,
-      callbackQuery.id,
-      "owner_not_allowed",
-      `Telegram user ${callbackQuery.from.id} is not the configured owner.`,
-      dependencies
-    );
-  }
-
-  if (dependencies.ownerChatId && chatId !== dependencies.ownerChatId) {
-    return answerStaleCallback(
-      updateId,
-      callbackQuery.id,
-      "owner_chat_mismatch",
-      `Telegram chat ${message.chat.id} is not the configured owner chat.`,
-      dependencies
-    );
-  }
+  const { senderId, chatId } = accessContext;
 
   const authState = dependencies.store.telegramUserAuth.get(senderId);
   if (authState?.bannedAt) {
@@ -434,6 +415,57 @@ async function answerStaleCallback(
   });
 
   return ignored(updateId, reason, detail);
+}
+
+function resolveTelegramAccessContext(input: {
+  readonly chatType: TelegramMessage["chat"]["type"];
+  readonly senderId: number;
+  readonly chatId: number;
+  readonly dependencies: Pick<TelegramUpdateMapperDependencies, "allowedUserIds" | "ownerUserId" | "ownerChatId">;
+}): ({
+  readonly ok: true;
+} & TelegramAccessContext) | ({
+  readonly ok: false;
+} & TelegramAccessFailure) {
+  if (input.chatType !== "private") {
+    return {
+      ok: false,
+      reason: "non_private_chat",
+      detail: "Only private chats are supported in V1."
+    };
+  }
+
+  const senderId = String(input.senderId);
+  if (!input.dependencies.allowedUserIds.has(senderId)) {
+    return {
+      ok: false,
+      reason: "user_not_allowed",
+      detail: `Telegram user ${input.senderId} is not allowlisted.`
+    };
+  }
+
+  if (input.dependencies.ownerUserId && senderId !== input.dependencies.ownerUserId) {
+    return {
+      ok: false,
+      reason: "owner_not_allowed",
+      detail: `Telegram user ${input.senderId} is not the configured owner.`
+    };
+  }
+
+  const chatId = String(input.chatId);
+  if (input.dependencies.ownerChatId && chatId !== input.dependencies.ownerChatId) {
+    return {
+      ok: false,
+      reason: "owner_chat_mismatch",
+      detail: `Telegram chat ${input.chatId} is not the configured owner chat.`
+    };
+  }
+
+  return {
+    ok: true,
+    senderId,
+    chatId
+  };
 }
 
 function parseMessageToInbound(

@@ -36,16 +36,26 @@ export class SessionActor {
       queuedEventCount: this.snapshot.queuedEventCount + 1
     };
 
-    const execution = this.tail.then(async () => {
-      const result = reduceSessionEvent(this.snapshot, event);
-      this.snapshot = {
-        ...result.snapshot,
-        queuedEventCount: Math.max(this.snapshot.queuedEventCount - 1, 0)
-      };
-      return {
-        ...result,
-        snapshot: this.getSnapshot()
-      };
+    const execution = this.tail.then(() => {
+      const currentSnapshot = this.snapshot;
+
+      try {
+        const result = reduceSessionEvent(currentSnapshot, event);
+        this.snapshot = {
+          ...result.snapshot,
+          queuedEventCount: Math.max(currentSnapshot.queuedEventCount - 1, 0)
+        };
+        return {
+          ...result,
+          snapshot: this.getSnapshot()
+        };
+      } catch (error) {
+        this.snapshot = {
+          ...currentSnapshot,
+          queuedEventCount: Math.max(currentSnapshot.queuedEventCount - 1, 0)
+        };
+        throw error;
+      }
     });
 
     this.tail = execution.then(() => undefined, () => undefined);
