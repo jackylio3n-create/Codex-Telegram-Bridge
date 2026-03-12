@@ -1,6 +1,6 @@
-node_modules/
-dist/
-*.tsbuildinfo
+bin/
+bridge
+*.deb
 
 .env
 .env.local

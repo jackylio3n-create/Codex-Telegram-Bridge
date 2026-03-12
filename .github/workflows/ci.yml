@@ -15,29 +15,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          node-version: 24
-          cache: npm
+          go-version-file: go.mod
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Format check
-        run: npm run format:check
-
       - name: Test
-        run: npm run test
+        run: go test ./cmd/... ./internal/...
+
+      - name: Build
+        run: go build ./cmd/bridge
+
+      - name: Bash syntax
+        run: |
+          bash -n scripts/deploy/install-ubuntu.sh
+          bash -n scripts/release/build-release.sh
 
       - name: Shellcheck
-        run: npm run lint:shell
+        run: shellcheck scripts/deploy/install-ubuntu.sh scripts/release/build-release.sh
