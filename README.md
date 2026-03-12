@@ -12,14 +12,42 @@
 
 ## 部署
 
+推荐直接执行：
+
 ```bash
+cd /root/Codex-Telegram-Bridge
+chmod +x ./scripts/deploy/install-ubuntu.sh
 ./scripts/deploy/install-ubuntu.sh
 ```
+
+安装脚本当前交互只会要求填写：
+
+- `Telegram bot token`
+- `Owner Telegram user ID`
+- `Telegram verification password`
+
+下面这些路径会自动使用默认值；如果目录不存在，会自动创建：
+
+- `workspace root`: `~/codex-workspaces/main`
+- `app home`: `~/.local/share/codex-telegram-bridge`
+- `codex home`: `~/.codex`
 
 如果目标机不装 Go，直接用预编译 release：
 
 ```bash
+cd /root/Codex-Telegram-Bridge
+chmod +x ./scripts/deploy/install-ubuntu.sh
 ./scripts/deploy/install-ubuntu.sh --from-release latest
+```
+
+如果你想非交互安装，也可以直接传参：
+
+```bash
+cd /root/Codex-Telegram-Bridge
+./scripts/deploy/install-ubuntu.sh \
+  --bot-token 'your-bot-token' \
+  --owner-user-id 'your-telegram-user-id' \
+  --verification-password 'your-verification-password'
 ```
 
 安装完成后直接用：
@@ -42,6 +70,18 @@ go build -o bin/codex-telegram-bridge ./cmd/bridge
 ```
 
 CLI 默认读取 `~/.config/codex-telegram-bridge/config.env`，通常不需要再传 `--config-env-file`。
+
+如果需要手工修改配置文件，默认位置是：
+
+```bash
+~/.config/codex-telegram-bridge/config.env
+```
+
+最关键的值通常是：
+
+- `CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN`
+- `CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID`
+- `CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH`
 
 发布 tag `v*` 时会自动产出 `linux-amd64` 和 `linux-arm64` 的 tar.gz release 资产。
 

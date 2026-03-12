@@ -181,6 +181,9 @@ func (c *Client) DownloadToTemp(ctx context.Context, fileID, preferredName, temp
 		return "", nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", nil, fmt.Errorf("telegram file download failed: http %d: %s", resp.StatusCode, readErrorBody(resp.StatusCode, resp.Body))
+	}
 
 	if err := os.MkdirAll(tempDir, 0o700); err != nil {
 		return "", nil, err
@@ -224,6 +227,9 @@ func (c *Client) call(ctx context.Context, method string, payload any, target an
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("telegram %s failed: http %d: %s", method, resp.StatusCode, readErrorBody(resp.StatusCode, resp.Body))
+	}
 
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
 		return err
@@ -268,4 +274,16 @@ func clampMessage(text string) string {
 		return text
 	}
 	return string(runes[:3900]) + "\n\n[truncated]"
+}
+
+func readErrorBody(statusCode int, reader io.Reader) string {
+	body, err := io.ReadAll(io.LimitReader(reader, 512))
+	if err != nil {
+		return "unable to read response body"
+	}
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return http.StatusText(statusCode)
+	}
+	return trimmed
 }

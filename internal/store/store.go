@@ -431,7 +431,7 @@ func (s *Store) Cleanup(ctx context.Context, resolvedOlderThan, expiredOlderThan
 
 	_, err := s.db.ExecContext(ctx, `
 DELETE FROM pending_actions
-WHERE resolved = 1 AND resolution = 'approved' AND resolved_at < ?
+WHERE resolved = 1 AND resolution IN ('approved', 'denied') AND resolved_at < ?
 `, resolvedOlderThan.UTC().Format(time.RFC3339))
 	if err != nil {
 		return err

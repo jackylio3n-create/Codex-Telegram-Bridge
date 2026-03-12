@@ -88,3 +88,54 @@ func TestStoreSessionAndPendingActionLifecycle(t *testing.T) {
 		t.Fatalf("expected verified_at to be set")
 	}
 }
+
+func TestCleanupRemovesDeniedPendingActions(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "bridge.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session := model.Session{
+		SessionID:     "session-cleanup",
+		WorkspaceRoot: "/tmp/workspace",
+		CWD:           "/tmp/workspace",
+		Mode:          model.ModeCode,
+		AccessScope:   model.ScopeWorkspace,
+		RunState:      model.RunIdle,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := store.SaveSession(ctx, session); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	action := model.PendingAction{
+		ActionID:   "action-denied",
+		ActionType: "approval",
+		SessionID:  session.SessionID,
+		ExpiresAt:  time.Now().UTC().Add(time.Hour),
+	}
+	if err := store.CreatePendingAction(ctx, action); err != nil {
+		t.Fatalf("create pending action: %v", err)
+	}
+	if err := store.ResolvePendingAction(ctx, action.ActionID, string(model.ResolutionDenied)); err != nil {
+		t.Fatalf("resolve pending action: %v", err)
+	}
+
+	if err := store.Cleanup(ctx, time.Now().UTC().Add(time.Hour), time.Now().UTC().Add(-time.Hour), 100); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	reloaded, err := store.GetPendingAction(ctx, action.ActionID)
+	if err != nil {
+		t.Fatalf("reload pending action: %v", err)
+	}
+	if reloaded != nil {
+		t.Fatalf("expected denied pending action to be deleted, got %#v", reloaded)
+	}
+}

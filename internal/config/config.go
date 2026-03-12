@@ -32,6 +32,7 @@ type Config struct {
 	DatabasePath                  string
 	LogFilePath                   string
 	PIDFilePath                   string
+	StateFilePath                 string
 	TempDir                       string
 	CodexHome                     string
 	TelegramBotToken              string
@@ -85,6 +86,7 @@ func Load(explicitEnvFile string) (Config, error) {
 		DatabasePath:                  filepath.Join(appHome, "bridge.db"),
 		LogFilePath:                   filepath.Join(appHome, "bridge.log"),
 		PIDFilePath:                   filepath.Join(appHome, "bridge.pid"),
+		StateFilePath:                 filepath.Join(appHome, "bridge-state.json"),
 		TempDir:                       filepath.Join(appHome, "tmp"),
 		CodexHome:                     codexHome,
 		TelegramBotToken:              strings.TrimSpace(os.Getenv(envBotToken)),
@@ -121,7 +123,7 @@ func DefaultEnvFilePath() (string, error) {
 }
 
 func (c Config) EnsureDirectories() error {
-	for _, path := range []string{c.AppHome, c.TempDir, c.CodexHome, filepath.Dir(c.LogFilePath), filepath.Dir(c.PIDFilePath)} {
+	for _, path := range []string{c.AppHome, c.TempDir, c.CodexHome, filepath.Dir(c.LogFilePath), filepath.Dir(c.PIDFilePath), filepath.Dir(c.StateFilePath)} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return fmt.Errorf("create %s: %w", path, err)
 		}

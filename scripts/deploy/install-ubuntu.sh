@@ -32,6 +32,7 @@ TARGET_USER="${SUDO_USER:-${USER:-}}"
 TARGET_HOME=""
 TARGET_GROUP=""
 ENV_FILE=""
+RUN_WITH_SUDO=0
 
 log() {
   printf '[install] %s\n' "$*"
@@ -40,6 +41,14 @@ log() {
 die() {
   printf '[install] Error: %s\n' "$*" >&2
   exit 1
+}
+
+run_privileged() {
+  if [[ ${RUN_WITH_SUDO} -eq 1 ]]; then
+    sudo "$@"
+  else
+    "$@"
+  fi
 }
 
 cleanup() {
@@ -92,6 +101,23 @@ require_value() {
   if [[ -z "${value}" ]]; then
     die "${option} requires a value."
   fi
+}
+
+read_env_value() {
+  local file_path="$1"
+  local key="$2"
+
+  [[ -f "${file_path}" ]] || return 0
+
+  awk -F= -v target="${key}" '
+    $0 ~ /^[[:space:]]*#/ { next }
+    $0 ~ /^[[:space:]]*$/ { next }
+    $1 == target {
+      sub(/^[^=]*=/, "", $0)
+      print $0
+      exit
+    }
+  ' "${file_path}"
 }
 
 prompt_with_default() {
@@ -295,8 +321,12 @@ ensure_supported_platform() {
 
 resolve_target_user_context() {
   [[ -n "${TARGET_USER}" ]] || die "Could not determine the target login user."
-  [[ "${TARGET_USER}" != "root" ]] || die "Run this installer as your normal login user, not as root."
-  [[ "${EUID}" -ne 0 ]] || die "Run this installer without sudo. It will request sudo only when needed."
+
+  if [[ "${EUID}" -eq 0 ]]; then
+    RUN_WITH_SUDO=0
+  else
+    RUN_WITH_SUDO=1
+  fi
 
   TARGET_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
   [[ -n "${TARGET_HOME}" ]] || die "Could not resolve the home directory for ${TARGET_USER}."
@@ -317,7 +347,9 @@ require_command() {
 ensure_prerequisites() {
   require_command getent
   require_command id
-  require_command sudo
+  if [[ ${RUN_WITH_SUDO} -eq 1 ]]; then
+    require_command sudo
+  fi
   require_command systemctl
   require_command codex
   require_command mktemp
@@ -384,37 +416,41 @@ detect_platform() {
 }
 
 load_existing_values() {
-  if [[ -f "${ENV_FILE}" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    . "${ENV_FILE}"
-    set +a
-  fi
+  BOT_TOKEN="${BOT_TOKEN:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN")}"
+  OWNER_USER_ID="${OWNER_USER_ID:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID")}"
+  OWNER_CHAT_ID="${OWNER_CHAT_ID:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID")}"
+  WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT")}"
+  APP_HOME="${APP_HOME:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_APP_HOME")}"
+  CODEX_HOME="${CODEX_HOME:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_CODEX_HOME")}"
+  LOG_LEVEL="${LOG_LEVEL:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL")}"
+  EXISTING_VERIFICATION_PASSWORD_HASH="$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH")"
 
-  BOT_TOKEN="${BOT_TOKEN:-${CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN:-}}"
-  OWNER_USER_ID="${OWNER_USER_ID:-${CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID:-}}"
-  OWNER_CHAT_ID="${OWNER_CHAT_ID:-${CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID:-}}"
-  WORKSPACE_ROOT="${WORKSPACE_ROOT:-${CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT:-${TARGET_HOME}/codex-workspaces/main}}"
-  APP_HOME="${APP_HOME:-${CODEX_TELEGRAM_BRIDGE_APP_HOME:-${TARGET_HOME}/.local/share/codex-telegram-bridge}}"
-  CODEX_HOME="${CODEX_HOME:-${CODEX_TELEGRAM_BRIDGE_CODEX_HOME:-${TARGET_HOME}/.codex}}"
-  LOG_LEVEL="${LOG_LEVEL:-${CODEX_TELEGRAM_BRIDGE_LOG_LEVEL:-info}}"
-  EXISTING_VERIFICATION_PASSWORD_HASH="${CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH:-}"
+  WORKSPACE_ROOT="${WORKSPACE_ROOT:-${TARGET_HOME}/codex-workspaces/main}"
+  APP_HOME="${APP_HOME:-${TARGET_HOME}/.local/share/codex-telegram-bridge}"
+  CODEX_HOME="${CODEX_HOME:-${TARGET_HOME}/.codex}"
+  LOG_LEVEL="${LOG_LEVEL:-info}"
 }
 
 collect_configuration() {
   echo
   echo "Bridge configuration"
-  echo "Press Enter to accept the default shown in brackets."
+  echo "Only the Telegram credentials are required interactively."
+  echo "Workspace and app paths will default automatically and be created if missing."
   echo
 
   BOT_TOKEN="$(prompt_secret_required "Telegram bot token" "${BOT_TOKEN}")"
   VERIFICATION_PASSWORD="$(prompt_secret_required_or_keep_existing "Telegram verification password" "${EXISTING_VERIFICATION_PASSWORD_HASH}")"
   OWNER_USER_ID="$(prompt_required "Owner Telegram user ID" "${OWNER_USER_ID}")"
-  OWNER_CHAT_ID="$(prompt_with_default "Owner Telegram chat ID (optional)" "${OWNER_CHAT_ID}")"
-  WORKSPACE_ROOT="$(prompt_with_default "Workspace root" "${WORKSPACE_ROOT}")"
-  APP_HOME="$(prompt_with_default "App home" "${APP_HOME}")"
-  CODEX_HOME="$(prompt_with_default "Codex home" "${CODEX_HOME}")"
-  LOG_LEVEL="$(prompt_with_default "Log level" "${LOG_LEVEL}")"
+
+  log "Using workspace root: ${WORKSPACE_ROOT}"
+  log "Using app home: ${APP_HOME}"
+  log "Using codex home: ${CODEX_HOME}"
+  log "Using log level: ${LOG_LEVEL}"
+  if [[ -n "${OWNER_CHAT_ID}" ]]; then
+    log "Using owner chat id: ${OWNER_CHAT_ID}"
+  else
+    log "Owner chat id not set; any private chat from the owner user id will be accepted."
+  fi
 }
 
 verify_codex_login() {
@@ -528,7 +564,7 @@ set -euo pipefail
 exec "${GO_BINARY_PATH}" --config-env-file "${ENV_FILE}" "\$@"
 EOF
 
-  sudo install -m 755 "${TEMP_WRAPPER_FILE}" "${CLI_WRAPPER_PATH}"
+  run_privileged install -m 755 "${TEMP_WRAPPER_FILE}" "${CLI_WRAPPER_PATH}"
 }
 
 install_service() {
@@ -556,11 +592,11 @@ UMask=0077
 WantedBy=multi-user.target
 EOF
 
-  sudo install -m 644 "${TEMP_SERVICE_FILE}" "${SERVICE_FILE}"
-  sudo chown "${TARGET_USER}:${TARGET_GROUP}" "${ENV_FILE}"
-  sudo chmod 600 "${ENV_FILE}"
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now codex-telegram-bridge
+  run_privileged install -m 644 "${TEMP_SERVICE_FILE}" "${SERVICE_FILE}"
+  run_privileged chown "${TARGET_USER}:${TARGET_GROUP}" "${ENV_FILE}"
+  run_privileged chmod 600 "${ENV_FILE}"
+  run_privileged systemctl daemon-reload
+  run_privileged systemctl enable --now codex-telegram-bridge
 }
 
 install_binary() {
@@ -574,21 +610,21 @@ post_install_checks() {
   local attempt
 
   for attempt in $(seq 1 15); do
-    if sudo systemctl is-active --quiet codex-telegram-bridge; then
+    if run_privileged systemctl is-active --quiet codex-telegram-bridge; then
       break
     fi
     sleep 1
   done
 
-  if ! sudo systemctl is-active --quiet codex-telegram-bridge; then
-    sudo systemctl --no-pager --full status codex-telegram-bridge || true
-    sudo journalctl -u codex-telegram-bridge -n 80 --no-pager || true
+  if ! run_privileged systemctl is-active --quiet codex-telegram-bridge; then
+    run_privileged systemctl --no-pager --full status codex-telegram-bridge || true
+    run_privileged journalctl -u codex-telegram-bridge -n 80 --no-pager || true
     die "Service failed to become active."
   fi
 
   if ! codex-telegram-bridge doctor; then
-    sudo systemctl --no-pager --full status codex-telegram-bridge || true
-    sudo journalctl -u codex-telegram-bridge -n 80 --no-pager || true
+    run_privileged systemctl --no-pager --full status codex-telegram-bridge || true
+    run_privileged journalctl -u codex-telegram-bridge -n 80 --no-pager || true
     die "Post-install doctor check failed."
   fi
 }
@@ -610,7 +646,9 @@ main() {
     log "Install source: local build"
   fi
 
-  sudo -v
+  if [[ ${RUN_WITH_SUDO} -eq 1 ]]; then
+    sudo -v
+  fi
 
   cd "${REPO_DIR}"
   load_existing_values
@@ -618,10 +656,7 @@ main() {
   verify_codex_login
   run_setup
 
-  set -a
-  # shellcheck disable=SC1090
-  . "${ENV_FILE}"
-  set +a
+  load_existing_values
 
   install_binary
   install_cli_wrapper
@@ -631,7 +666,7 @@ main() {
   echo
   echo "Bridge installed, started, and self-checked."
   echo
-  sudo systemctl --no-pager --full status codex-telegram-bridge | sed -n '1,12p'
+  run_privileged systemctl --no-pager --full status codex-telegram-bridge | sed -n '1,12p'
   echo
   echo "Useful commands:"
   echo "  systemctl status codex-telegram-bridge"

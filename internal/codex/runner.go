@@ -208,8 +208,9 @@ func (r *Run) launch(ctx context.Context, options Options) Result {
 func buildArgs(options Options) []string {
 	args := []string{"exec"}
 	if options.ResumeThreadID != "" {
-		args = append(args, "resume", options.ResumeThreadID)
-		appendSharedArgs(&args, options.Mode, options.ExtraWritable, options.Images)
+		args = append(args, "resume", "--json", "--skip-git-repo-check")
+		appendResumeArgs(&args, options.Mode, options.Images)
+		args = append(args, options.ResumeThreadID)
 		args = append(args, "-")
 		return args
 	}
@@ -223,6 +224,10 @@ func buildArgs(options Options) []string {
 func appendSharedArgs(args *[]string, mode model.SessionMode, extraWritable, images []string) {
 	*args = append(*args, "--json", "--skip-git-repo-check")
 	appendConfigArgs(args, mode, extraWritable, images)
+}
+
+func appendResumeArgs(args *[]string, mode model.SessionMode, images []string) {
+	appendConfigArgs(args, mode, nil, images)
 }
 
 func appendConfigArgs(args *[]string, mode model.SessionMode, extraWritable, images []string) {

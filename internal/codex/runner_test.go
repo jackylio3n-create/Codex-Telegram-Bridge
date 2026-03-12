@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,33 @@ func TestRunEmitsApprovalRequest(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for approval request")
+	}
+}
+
+func TestBuildArgsForResumeOmitsUnsupportedFlags(t *testing.T) {
+	t.Parallel()
+
+	args := buildArgs(Options{
+		Prompt:         "hello",
+		ResumeThreadID: "thread-123",
+		CWD:            "/tmp/workspace",
+		Mode:           model.ModeCode,
+		ExtraWritable:  []string{"/tmp/extra"},
+		Images:         []string{"image.png"},
+	})
+
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--add-dir") {
+		t.Fatalf("resume args must not include --add-dir: %q", joined)
+	}
+	if strings.Contains(joined, "-C ") {
+		t.Fatalf("resume args must not include -C: %q", joined)
+	}
+	if !strings.Contains(joined, "exec resume --json --skip-git-repo-check") {
+		t.Fatalf("unexpected resume args: %q", joined)
+	}
+	if !strings.Contains(joined, "thread-123 -") {
+		t.Fatalf("resume thread id/prompt marker missing: %q", joined)
 	}
 }
 
