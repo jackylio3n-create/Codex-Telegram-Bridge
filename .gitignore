@@ -3,8 +3,11 @@ bridge
 *.deb
 
 .env
+.env.*
 .env.local
 .env.*.local
+*.env
+config.env
 
 .codex/
 .idea/
@@ -13,10 +16,15 @@ bridge
 coverage/
 
 *.log
+*.pid
 *.tmp
 *.bak
 *.orig
 *.rej
+*.db
+*.sqlite
+*.sqlite3
+bridge-state.json
 
 .DS_Store
 Thumbs.db
