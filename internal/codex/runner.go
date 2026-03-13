@@ -49,15 +49,19 @@ type Result struct {
 }
 
 type Options struct {
-	Executable     string
-	Prompt         string
-	ResumeThreadID string
-	RollingSummary string
-	CWD            string
-	Mode           model.SessionMode
-	ExtraWritable  []string
-	Images         []string
-	Environment    []string
+	Executable       string
+	Prompt           string
+	ResumeThreadID   string
+	RollingSummary   string
+	CWD              string
+	Mode             model.SessionMode
+	ReasoningEffort  string
+	ApprovalPolicy   string
+	SandboxMode      string
+	OutputSchemaPath string
+	ExtraWritable    []string
+	Images           []string
+	Environment      []string
 }
 
 type Run struct {
@@ -113,13 +117,17 @@ func (r *Run) run(ctx context.Context, options Options) {
 
 	_ = r.Cancel()
 	result = r.launch(ctx, Options{
-		Executable:    options.Executable,
-		Prompt:        buildPromptWithRollingSummary(options.Prompt, options.RollingSummary),
-		CWD:           options.CWD,
-		Mode:          options.Mode,
-		ExtraWritable: options.ExtraWritable,
-		Images:        options.Images,
-		Environment:   options.Environment,
+		Executable:       options.Executable,
+		Prompt:           buildPromptWithRollingSummary(options.Prompt, options.RollingSummary),
+		CWD:              options.CWD,
+		Mode:             options.Mode,
+		ReasoningEffort:  options.ReasoningEffort,
+		ApprovalPolicy:   options.ApprovalPolicy,
+		SandboxMode:      options.SandboxMode,
+		OutputSchemaPath: options.OutputSchemaPath,
+		ExtraWritable:    options.ExtraWritable,
+		Images:           options.Images,
+		Environment:      options.Environment,
 	})
 	result.StaleRecovered = true
 	result.UsedSummarySeed = strings.TrimSpace(options.RollingSummary) != ""
@@ -209,33 +217,45 @@ func buildArgs(options Options) []string {
 	args := []string{"exec"}
 	if options.ResumeThreadID != "" {
 		args = append(args, "resume", "--json", "--skip-git-repo-check")
-		appendResumeArgs(&args, options.Mode, options.Images)
+		appendResumeArgs(&args, options.Mode, options.ReasoningEffort, options.ApprovalPolicy, options.SandboxMode, options.OutputSchemaPath, options.Images)
 		args = append(args, options.ResumeThreadID)
 		args = append(args, "-")
 		return args
 	}
 
 	args = append(args, "--json", "--skip-git-repo-check", "-C", options.CWD)
-	appendConfigArgs(&args, options.Mode, options.ExtraWritable, options.Images)
+	appendConfigArgs(&args, options.Mode, options.ReasoningEffort, options.ApprovalPolicy, options.SandboxMode, options.OutputSchemaPath, options.ExtraWritable, options.Images)
 	args = append(args, "-")
 	return args
 }
 
-func appendSharedArgs(args *[]string, mode model.SessionMode, extraWritable, images []string) {
+func appendSharedArgs(args *[]string, mode model.SessionMode, reasoningEffort, approvalPolicy, sandboxMode, outputSchemaPath string, extraWritable, images []string) {
 	*args = append(*args, "--json", "--skip-git-repo-check")
-	appendConfigArgs(args, mode, extraWritable, images)
+	appendConfigArgs(args, mode, reasoningEffort, approvalPolicy, sandboxMode, outputSchemaPath, extraWritable, images)
 }
 
-func appendResumeArgs(args *[]string, mode model.SessionMode, images []string) {
-	appendConfigArgs(args, mode, nil, images)
+func appendResumeArgs(args *[]string, mode model.SessionMode, reasoningEffort, approvalPolicy, sandboxMode, outputSchemaPath string, images []string) {
+	appendConfigArgs(args, mode, reasoningEffort, approvalPolicy, sandboxMode, outputSchemaPath, nil, images)
 }
 
-func appendConfigArgs(args *[]string, mode model.SessionMode, extraWritable, images []string) {
-	sandbox := "workspace-write"
-	if mode == model.ModeAsk {
-		sandbox = "read-only"
+func appendConfigArgs(args *[]string, mode model.SessionMode, reasoningEffort, approvalPolicy, sandboxMode, outputSchemaPath string, extraWritable, images []string) {
+	_ = mode
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	approvalPolicy = strings.TrimSpace(approvalPolicy)
+	if approvalPolicy == "" {
+		approvalPolicy = "never"
 	}
-	*args = append(*args, "-c", `approval_policy="on-request"`, "-c", fmt.Sprintf(`sandbox_mode="%s"`, sandbox))
+	sandboxMode = strings.TrimSpace(sandboxMode)
+	if sandboxMode == "" {
+		sandboxMode = "danger-full-access"
+	}
+	*args = append(*args, "-c", fmt.Sprintf(`approval_policy="%s"`, approvalPolicy), "-c", fmt.Sprintf(`sandbox_mode="%s"`, sandboxMode))
+	if reasoningEffort != "" {
+		*args = append(*args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, reasoningEffort))
+	}
+	if strings.TrimSpace(outputSchemaPath) != "" {
+		*args = append(*args, "--output-schema", outputSchemaPath)
+	}
 	for _, image := range images {
 		*args = append(*args, "-i", image)
 	}

@@ -51,3 +51,21 @@ func TestWriteReasoningEffortReplacesExistingLine(t *testing.T) {
 		t.Fatalf("expected xhigh, got %q", current)
 	}
 }
+
+func TestReadPlanReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	codexHome := t.TempDir()
+	configPath := filepath.Join(codexHome, "config.toml")
+	if err := os.WriteFile(configPath, []byte("plan_mode_reasoning_effort = \"medium\"\n"), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	current, err := ReadPlanReasoningEffort(codexHome)
+	if err != nil {
+		t.Fatalf("read plan reasoning effort: %v", err)
+	}
+	if current != "medium" {
+		t.Fatalf("expected medium, got %q", current)
+	}
+}

@@ -33,12 +33,9 @@ func commandHelpText(language string) string {
 			"/mode <ask|plan|code> - 切换模式",
 			"/scope [workspace|system] - 查看或切换访问范围",
 			"/think [minimal|low|medium|high|xhigh] - 查看或设置思考强度",
-			"/ctx - 查看当前会话状态",
-			"/stat - 查看当前会话状态",
+			"/ctx - 查看当前 Codex 运行上下文",
+			"/stat - 查看当前 bridge 会话状态",
 			"/stop - 停止当前运行",
-			"/perm - 查看待审批请求",
-			"/perm approve <id> - 允许指定审批请求",
-			"/perm deny <id> - 拒绝指定审批请求",
 		}, "\n")
 	}
 	return strings.Join([]string{
@@ -51,12 +48,9 @@ func commandHelpText(language string) string {
 		"/mode <ask|plan|code> - change the current mode",
 		"/scope [workspace|system] - show or change access scope",
 		"/think [minimal|low|medium|high|xhigh] - show or set reasoning effort",
-		"/ctx - show current session state",
-		"/stat - show current session state",
+		"/ctx - show current Codex runtime context",
+		"/stat - show current bridge session state",
 		"/stop - stop the active run",
-		"/perm - list pending approvals",
-		"/perm approve <id> - approve a pending action",
-		"/perm deny <id> - deny a pending action",
 	}, "\n")
 }
 

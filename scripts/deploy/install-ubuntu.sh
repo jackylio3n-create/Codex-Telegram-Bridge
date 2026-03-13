@@ -23,6 +23,8 @@ WORKSPACE_ROOT=""
 APP_HOME=""
 CODEX_HOME=""
 LOG_LEVEL=""
+APPROVAL_POLICY=""
+SANDBOX_MODE=""
 VERIFICATION_PASSWORD=""
 EXISTING_VERIFICATION_PASSWORD_HASH=""
 TEMP_SERVICE_FILE=""
@@ -88,6 +90,9 @@ Options:
   --app-home <path>         Provide the app home non-interactively.
   --codex-home <path>       Provide the Codex home non-interactively.
   --log-level <level>       Provide the log level non-interactively.
+  --approval-policy <value>
+                           Provide the Codex approval policy non-interactively.
+  --sandbox-mode <value>   Provide the Codex sandbox mode non-interactively.
   --verification-password <password>
                            Provide the verification password non-interactively.
   --help                    Show this help text.
@@ -286,6 +291,16 @@ parse_args() {
         LOG_LEVEL="$2"
         shift 2
         ;;
+      --approval-policy)
+        require_value "$1" "${2-}"
+        APPROVAL_POLICY="$2"
+        shift 2
+        ;;
+      --sandbox-mode)
+        require_value "$1" "${2-}"
+        SANDBOX_MODE="$2"
+        shift 2
+        ;;
       --verification-password)
         require_value "$1" "${2-}"
         VERIFICATION_PASSWORD="$2"
@@ -423,12 +438,16 @@ load_existing_values() {
   APP_HOME="${APP_HOME:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_APP_HOME")}"
   CODEX_HOME="${CODEX_HOME:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_CODEX_HOME")}"
   LOG_LEVEL="${LOG_LEVEL:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL")}"
+  APPROVAL_POLICY="${APPROVAL_POLICY:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY")}"
+  SANDBOX_MODE="${SANDBOX_MODE:-$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE")}"
   EXISTING_VERIFICATION_PASSWORD_HASH="$(read_env_value "${ENV_FILE}" "CODEX_TELEGRAM_BRIDGE_VERIFICATION_PASSWORD_HASH")"
 
   WORKSPACE_ROOT="${WORKSPACE_ROOT:-${TARGET_HOME}/codex-workspaces/main}"
   APP_HOME="${APP_HOME:-${TARGET_HOME}/.local/share/codex-telegram-bridge}"
   CODEX_HOME="${CODEX_HOME:-${TARGET_HOME}/.codex}"
   LOG_LEVEL="${LOG_LEVEL:-info}"
+  APPROVAL_POLICY="${APPROVAL_POLICY:-never}"
+  SANDBOX_MODE="${SANDBOX_MODE:-danger-full-access}"
 }
 
 collect_configuration() {
@@ -446,6 +465,8 @@ collect_configuration() {
   log "Using app home: ${APP_HOME}"
   log "Using codex home: ${CODEX_HOME}"
   log "Using log level: ${LOG_LEVEL}"
+  log "Using approval policy: ${APPROVAL_POLICY}"
+  log "Using sandbox mode: ${SANDBOX_MODE}"
   if [[ -n "${OWNER_CHAT_ID}" ]]; then
     log "Using owner chat id: ${OWNER_CHAT_ID}"
   else
@@ -539,6 +560,8 @@ run_setup() {
       --app-home "${APP_HOME}"
       --codex-home "${CODEX_HOME}"
       --log-level "${LOG_LEVEL}"
+      --approval-policy "${APPROVAL_POLICY}"
+      --sandbox-mode "${SANDBOX_MODE}"
     )
 
     if [[ -n "${OWNER_CHAT_ID}" ]]; then

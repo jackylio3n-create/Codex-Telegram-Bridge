@@ -7,6 +7,7 @@ type SessionAccessScope string
 type SessionRunState string
 type CancellationResult string
 type PendingActionResolution string
+type PendingActionType string
 
 const (
 	ModeAsk  SessionMode = "ask"
@@ -38,6 +39,12 @@ const (
 	ResolutionApproved PendingActionResolution = "approved"
 	ResolutionDenied   PendingActionResolution = "denied"
 	ResolutionExpired  PendingActionResolution = "expired"
+)
+
+const (
+	ActionApproval   PendingActionType = "approval"
+	ActionAddDir     PendingActionType = "adddir_confirm"
+	ActionPlanChoice PendingActionType = "plan_choice"
 )
 
 type Session struct {

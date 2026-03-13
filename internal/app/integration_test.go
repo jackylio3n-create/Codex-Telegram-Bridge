@@ -112,6 +112,104 @@ func TestCoordinatorApprovalResumeFlow(t *testing.T) {
 	}
 }
 
+func TestCoordinatorPlanModePresentsChoicesAndContinuesSelectedOption(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		OwnerUserID:                   "1",
+		OwnerChatID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeFakeCodex(t),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	api := newFakeTelegramServer(t)
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	coordinator := NewCoordinator(cfg, testLogger(t), storeHandle, client)
+	api.PushUpdate(textUpdate(10, "/new"))
+	api.PushUpdate(textUpdate(11, "/mode plan"))
+	api.PushUpdate(textUpdate(12, "design the fix"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	planMessage := api.WaitForEditedMessage(t, "Plan ready:", 10*time.Second)
+	if !strings.Contains(planMessage.Text, "Recommended") {
+		t.Fatalf("expected recommended plan label, got %q", planMessage.Text)
+	}
+
+	var action *model.PendingAction
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		pending, err := storeHandle.ListPendingActions(context.Background(), true)
+		if err != nil {
+			t.Fatalf("list pending actions: %v", err)
+		}
+		for _, item := range pending {
+			if item.ActionType == string(model.ActionPlanChoice) {
+				action = &item
+				break
+			}
+		}
+		if action != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if action == nil {
+		t.Fatal("timed out waiting for plan choice action")
+	}
+
+	choiceMessage := api.WaitForSentMessage(t, "Choose a plan to continue", 10*time.Second)
+	api.PushUpdate(callbackDataUpdate(13, choiceMessage.MessageID, "pc:"+action.ActionID+":0"))
+	api.WaitForEditedMessage(t, "Executed selected plan", 10*time.Second)
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
 func TestCoordinatorDoesNotDuplicateUpdatesWhenTelegramRepeatsOffsetWindow(t *testing.T) {
 	t.Parallel()
 
@@ -648,6 +746,20 @@ func writeFakeCodex(t *testing.T) string {
 set -euo pipefail
 prompt="$(cat)"
 trap 'exit 0' INT
+if [[ "${prompt}" == *"You are operating in plan mode."* ]]; then
+  echo '{"type":"thread.started","thread_id":"thread-live"}'
+  sleep 0.05
+  echo '{"type":"agent_message","message":"{\"summary\":\"Plan the implementation safely\",\"assumptions\":[\"Tests can be run locally\"],\"options\":[{\"title\":\"Minimal fix\",\"details\":\"Patch the failing path and run targeted tests\",\"recommended\":true},{\"title\":\"Broader refactor\",\"details\":\"Refactor the module before fixing the issue\",\"recommended\":false}]}"}'
+  sleep 0.05
+  exit 0
+fi
+if [[ "${prompt}" == *"The user selected an implementation option from plan mode."* ]]; then
+  echo '{"type":"thread.started","thread_id":"thread-live"}'
+  sleep 0.05
+  echo '{"type":"agent_message","message":"Executed selected plan"}'
+  sleep 0.05
+  exit 0
+fi
 if [[ "${2:-}" == "resume" ]] || [[ "${prompt}" == *"Resume the previous task"* ]]; then
   echo '{"type":"thread.started","thread_id":"thread-live"}'
   sleep 0.05

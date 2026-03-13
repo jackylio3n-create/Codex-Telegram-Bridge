@@ -15,16 +15,18 @@ import (
 const VerificationPasswordEnvVar = "CODEX_TELEGRAM_BRIDGE_SETUP_VERIFICATION_PASSWORD"
 
 type Options struct {
-	EnvFilePath   string
-	Interactive   bool
-	ShowHelp      bool
-	BotToken      string
-	OwnerUserID   string
-	OwnerChatID   string
-	WorkspaceRoot string
-	AppHome       string
-	CodexHome     string
-	LogLevel      string
+	EnvFilePath    string
+	Interactive    bool
+	ShowHelp       bool
+	BotToken       string
+	OwnerUserID    string
+	OwnerChatID    string
+	WorkspaceRoot  string
+	AppHome        string
+	CodexHome      string
+	LogLevel       string
+	ApprovalPolicy string
+	SandboxMode    string
 }
 
 func HelpText() string {
@@ -42,6 +44,8 @@ func HelpText() string {
 		"  --app-home <path>          Set CODEX_TELEGRAM_BRIDGE_APP_HOME.",
 		"  --codex-home <path>        Set CODEX_TELEGRAM_BRIDGE_CODEX_HOME.",
 		"  --log-level <level>        Set CODEX_TELEGRAM_BRIDGE_LOG_LEVEL.",
+		"  --approval-policy <value>  Set CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY.",
+		"  --sandbox-mode <value>     Set CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE.",
 		"  --help                     Show this message.",
 	}, "\n")
 }
@@ -83,6 +87,12 @@ func ParseArgs(args []string) (Options, error) {
 		case "--log-level":
 			index++
 			options.LogLevel, err = readValue(args, index)
+		case "--approval-policy":
+			index++
+			options.ApprovalPolicy, err = readValue(args, index)
+		case "--sandbox-mode":
+			index++
+			options.SandboxMode, err = readValue(args, index)
 		case "--help", "-h":
 			options.ShowHelp = true
 		default:
@@ -138,6 +148,8 @@ func resolveValues(existing map[string]string, options Options) (map[string]stri
 		"CODEX_TELEGRAM_BRIDGE_APP_HOME":               firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_APP_HOME"], filepath.Join(home, ".local", "share", "codex-telegram-bridge")),
 		"CODEX_TELEGRAM_BRIDGE_CODEX_HOME":             firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_HOME"], existing["CODEX_HOME"], filepath.Join(home, ".codex")),
 		"CODEX_TELEGRAM_BRIDGE_LOG_LEVEL":              firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"], "info"),
+		"CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY":  firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"], "never"),
+		"CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE":     firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"], "danger-full-access"),
 		"CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN":     existing["CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN"],
 		"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID": existing["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"],
 		"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID": existing["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID"],
@@ -183,6 +195,8 @@ func buildEntries(existing map[string]string, values map[string]string) ([][2]st
 		[2]string{"CODEX_TELEGRAM_BRIDGE_APP_HOME", filepath.Clean(values["CODEX_TELEGRAM_BRIDGE_APP_HOME"])},
 		[2]string{"CODEX_TELEGRAM_BRIDGE_CODEX_HOME", filepath.Clean(values["CODEX_TELEGRAM_BRIDGE_CODEX_HOME"])},
 		[2]string{"CODEX_TELEGRAM_BRIDGE_LOG_LEVEL", values["CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY", values["CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE", values["CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"]},
 	)
 	if value := strings.TrimSpace(values["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"]); value != "" {
 		entries = append(entries, [2]string{"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID", value})
@@ -213,6 +227,8 @@ func applyOptionValues(values map[string]string, options Options) {
 	assign("CODEX_TELEGRAM_BRIDGE_APP_HOME", options.AppHome)
 	assign("CODEX_TELEGRAM_BRIDGE_CODEX_HOME", options.CodexHome)
 	assign("CODEX_TELEGRAM_BRIDGE_LOG_LEVEL", options.LogLevel)
+	assign("CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY", options.ApprovalPolicy)
+	assign("CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE", options.SandboxMode)
 }
 
 func promptValues(values map[string]string) map[string]string {
@@ -228,6 +244,8 @@ func promptValues(values map[string]string) map[string]string {
 		{"App home", "CODEX_TELEGRAM_BRIDGE_APP_HOME"},
 		{"Codex home", "CODEX_TELEGRAM_BRIDGE_CODEX_HOME"},
 		{"Log level", "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"},
+		{"Approval policy", "CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"},
+		{"Sandbox mode", "CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"},
 	}
 	for _, prompt := range prompts {
 		fmt.Printf("%s [%s]: ", prompt.label, values[prompt.key])

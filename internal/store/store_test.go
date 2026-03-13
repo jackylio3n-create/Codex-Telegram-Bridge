@@ -139,3 +139,42 @@ func TestCleanupRemovesDeniedPendingActions(t *testing.T) {
 		t.Fatalf("expected denied pending action to be deleted, got %#v", reloaded)
 	}
 }
+
+func TestStoreAcceptsPlanChoicePendingAction(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "bridge.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session := model.Session{
+		SessionID:     "session-plan",
+		WorkspaceRoot: "/tmp/workspace",
+		CWD:           "/tmp/workspace",
+		Mode:          model.ModePlan,
+		AccessScope:   model.ScopeWorkspace,
+		RunState:      model.RunIdle,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := store.SaveSession(ctx, session); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	action := model.PendingAction{
+		ActionID:   "action-plan",
+		ActionType: string(model.ActionPlanChoice),
+		SessionID:  session.SessionID,
+		Payload: map[string]string{
+			"summary": "Choose a plan",
+		},
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	if err := store.CreatePendingAction(ctx, action); err != nil {
+		t.Fatalf("create plan choice action: %v", err)
+	}
+}

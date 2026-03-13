@@ -23,6 +23,14 @@ func IsReasoningEffort(value string) bool {
 }
 
 func ReadReasoningEffort(codexHome string) (string, error) {
+	return readConfigString(codexHome, "model_reasoning_effort")
+}
+
+func ReadPlanReasoningEffort(codexHome string) (string, error) {
+	return readConfigString(codexHome, "plan_mode_reasoning_effort")
+}
+
+func readConfigString(codexHome, key string) (string, error) {
 	raw, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -30,7 +38,7 @@ func ReadReasoningEffort(codexHome string) (string, error) {
 		}
 		return "", err
 	}
-	match := regexp.MustCompile(`(?m)^\s*model_reasoning_effort\s*=\s*"([^"]*)"`).FindSubmatch(raw)
+	match := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `\s*=\s*"([^"]*)"`).FindSubmatch(raw)
 	if len(match) != 2 {
 		return "", nil
 	}

@@ -127,6 +127,64 @@ func TestBuildArgsForResumeOmitsUnsupportedFlags(t *testing.T) {
 	}
 }
 
+func TestBuildArgsDefaultsToUnrestrictedRuntime(t *testing.T) {
+	t.Parallel()
+
+	args := buildArgs(Options{
+		Prompt: "hello",
+		CWD:    "/tmp/workspace",
+		Mode:   model.ModeCode,
+	})
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `approval_policy="never"`) {
+		t.Fatalf("expected never approval policy, got %q", joined)
+	}
+	if !strings.Contains(joined, `sandbox_mode="danger-full-access"`) {
+		t.Fatalf("expected danger-full-access sandbox mode, got %q", joined)
+	}
+}
+
+func TestBuildArgsHonorsConfiguredRuntimePolicy(t *testing.T) {
+	t.Parallel()
+
+	args := buildArgs(Options{
+		Prompt:         "hello",
+		CWD:            "/tmp/workspace",
+		Mode:           model.ModeAsk,
+		ApprovalPolicy: "on-request",
+		SandboxMode:    "workspace-write",
+	})
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `approval_policy="on-request"`) {
+		t.Fatalf("expected configured approval policy, got %q", joined)
+	}
+	if !strings.Contains(joined, `sandbox_mode="workspace-write"`) {
+		t.Fatalf("expected configured sandbox mode, got %q", joined)
+	}
+}
+
+func TestBuildArgsIncludesReasoningEffortAndOutputSchema(t *testing.T) {
+	t.Parallel()
+
+	args := buildArgs(Options{
+		Prompt:           "hello",
+		CWD:              "/tmp/workspace",
+		Mode:             model.ModePlan,
+		ReasoningEffort:  "high",
+		OutputSchemaPath: "/tmp/plan-schema.json",
+	})
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `model_reasoning_effort="high"`) {
+		t.Fatalf("expected reasoning effort override, got %q", joined)
+	}
+	if !strings.Contains(joined, "--output-schema /tmp/plan-schema.json") {
+		t.Fatalf("expected output schema path, got %q", joined)
+	}
+}
+
 func writeFakeCodex(t *testing.T) string {
 	t.Helper()
 

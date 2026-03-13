@@ -19,9 +19,13 @@ const (
 	envLogLevel              = "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"
 	envCodexExecutable       = "CODEX_TELEGRAM_BRIDGE_CODEX_EXECUTABLE"
 	envCodexHome             = "CODEX_TELEGRAM_BRIDGE_CODEX_HOME"
+	envApprovalPolicy        = "CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"
+	envSandboxMode           = "CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"
 	envResolvedApprovalDays  = "CODEX_TELEGRAM_BRIDGE_RESOLVED_APPROVAL_RETENTION_DAYS"
 	envExpiredApprovalDays   = "CODEX_TELEGRAM_BRIDGE_EXPIRED_APPROVAL_RETENTION_DAYS"
 	envMaxAuditRows          = "CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS"
+	defaultApprovalPolicy    = "never"
+	defaultSandboxMode       = "danger-full-access"
 	defaultResolvedRetention = 7
 	defaultExpiredRetention  = 1
 	defaultMaxAuditRows      = 1000
@@ -42,6 +46,8 @@ type Config struct {
 	DefaultWorkspaceRoot          string
 	LogLevel                      string
 	CodexExecutable               string
+	CodexApprovalPolicy           string
+	CodexSandboxMode              string
 	ResolvedApprovalRetentionDays int
 	ExpiredApprovalRetentionDays  int
 	MaxAuditRows                  int
@@ -96,6 +102,8 @@ func Load(explicitEnvFile string) (Config, error) {
 		DefaultWorkspaceRoot:          strings.TrimSpace(os.Getenv(envWorkspaceRoot)),
 		LogLevel:                      firstNonEmpty(strings.TrimSpace(os.Getenv(envLogLevel)), "info"),
 		CodexExecutable:               firstNonEmpty(strings.TrimSpace(os.Getenv(envCodexExecutable)), "codex"),
+		CodexApprovalPolicy:           firstNonEmpty(strings.TrimSpace(os.Getenv(envApprovalPolicy)), defaultApprovalPolicy),
+		CodexSandboxMode:              firstNonEmpty(strings.TrimSpace(os.Getenv(envSandboxMode)), defaultSandboxMode),
 		ResolvedApprovalRetentionDays: readIntEnv(envResolvedApprovalDays, defaultResolvedRetention),
 		ExpiredApprovalRetentionDays:  readIntEnv(envExpiredApprovalDays, defaultExpiredRetention),
 		MaxAuditRows:                  readIntEnv(envMaxAuditRows, defaultMaxAuditRows),

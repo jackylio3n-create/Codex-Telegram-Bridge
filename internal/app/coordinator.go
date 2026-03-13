@@ -40,6 +40,7 @@ type activeRun struct {
 	RunID            string
 	ChatID           string
 	UserID           string
+	Prompt           string
 	PreviewMessageID int64
 	Runner           *codex.Run
 	PendingActionID  string
@@ -278,6 +279,20 @@ func (c *Coordinator) handleCallback(ctx context.Context, callback *telegram.Cal
 			return err
 		}
 		return c.resolveApproval(ctx, chatID, userID, strings.TrimPrefix(data, "pd:"), false)
+	case strings.HasPrefix(data, "pc:"):
+		actionID, optionIndex, ok := parsePlanChoiceCallback(data)
+		if !ok {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Invalid plan option.", "无效的规划选项。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Continuing with that plan.", "将按这个方案继续。"), false); err != nil {
+			return err
+		}
+		return c.resolvePlanChoice(ctx, chatID, userID, actionID, optionIndex)
+	case strings.HasPrefix(data, "pr:"):
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Replanning.", "正在重新规划。"), false); err != nil {
+			return err
+		}
+		return c.retryPlanChoice(ctx, chatID, userID, strings.TrimPrefix(data, "pr:"))
 	default:
 		return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Expired or already handled.", "已过期或已经处理过。"), true)
 	}
@@ -382,12 +397,12 @@ func (c *Coordinator) handleCommand(ctx context.Context, chatID, userID, text st
 		return c.commandMode(ctx, chatID, userID, args)
 	case "/scope":
 		return c.commandScope(ctx, chatID, userID, args)
-	case "/ctx", "/stat":
+	case "/ctx":
+		return c.commandContext(ctx, chatID, userID)
+	case "/stat":
 		return c.commandStatus(ctx, chatID, userID)
 	case "/stop":
 		return c.commandStop(ctx, chatID, userID)
-	case "/perm":
-		return c.commandPerm(ctx, chatID, userID, args)
 	case "/think":
 		return c.commandThink(ctx, chatID, userID, args)
 	default:
@@ -475,11 +490,12 @@ func (c *Coordinator) commandCD(ctx context.Context, chatID, userID, requested s
 		return sendErr
 	}
 	session.CWD = next
+	c.resetSessionExecutionContext(session)
 	session.UpdatedAt = time.Now().UTC()
 	if err := c.store.SaveSession(ctx, *session); err != nil {
 		return err
 	}
-	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Updated cwd to %s", "当前目录已更新为 %s", next), nil)
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Updated cwd to %s\nCodex thread reset so the next run starts from the new directory.", "当前目录已更新为 %s\nCodex 线程已重置，下一次运行会从新目录开始。", next), nil)
 	return err
 }
 
@@ -503,11 +519,12 @@ func (c *Coordinator) commandMode(ctx context.Context, chatID, userID string, ar
 		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Usage: /mode <ask|plan|code>", "用法：/mode <ask|plan|code>"), nil)
 		return err
 	}
+	c.resetSessionExecutionContext(session)
 	session.UpdatedAt = time.Now().UTC()
 	if err := c.store.SaveSession(ctx, *session); err != nil {
 		return err
 	}
-	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Mode updated to %s", "模式已更新为 %s", modeLabel(c.preferredLanguage(ctx, userID, chatID), session.Mode)), nil)
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Mode updated to %s\nCodex thread reset so the next run uses the new mode.", "模式已更新为 %s\nCodex 线程已重置，下一次运行会使用新模式。", modeLabel(c.preferredLanguage(ctx, userID, chatID), session.Mode)), nil)
 	return err
 }
 
@@ -531,11 +548,67 @@ func (c *Coordinator) commandScope(ctx context.Context, chatID, userID string, a
 		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Usage: /scope [workspace|system]", "用法：/scope [workspace|system]"), nil)
 		return err
 	}
+	c.resetSessionExecutionContext(session)
 	session.UpdatedAt = time.Now().UTC()
 	if err := c.store.SaveSession(ctx, *session); err != nil {
 		return err
 	}
-	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Scope updated to %s", "范围已更新为 %s", scopeLabel(c.preferredLanguage(ctx, userID, chatID), session.AccessScope)), nil)
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Scope updated to %s\nCodex thread reset so the next run uses the new scope.", "范围已更新为 %s\nCodex 线程已重置，下一次运行会使用新范围。", scopeLabel(c.preferredLanguage(ctx, userID, chatID), session.AccessScope)), nil)
+	return err
+}
+
+func (c *Coordinator) commandContext(ctx context.Context, chatID, userID string) error {
+	info, err := codex.ReadRuntimeInfo(c.cfg.CodexHome)
+	if err != nil {
+		return err
+	}
+	session, _ := c.store.GetCurrentSession(ctx)
+	lines := []string{}
+	language := c.preferredLanguage(ctx, userID, chatID)
+	if normalizeLanguage(language) == "zh" {
+		lines = append(lines, "Codex 运行上下文：")
+		lines = append(lines, fmt.Sprintf("模型: %s", emptyFallback(info.Model, "unknown")))
+		lines = append(lines, fmt.Sprintf("推理强度: %s", emptyFallback(info.ReasoningEffort, "unknown")))
+		if info.ContextWindow > 0 {
+			lines = append(lines, fmt.Sprintf("上下文窗口剩余: %d / %d", info.ContextRemaining, info.ContextWindow))
+		}
+		if !info.PrimaryResetsAt.IsZero() {
+			lines = append(lines, fmt.Sprintf("5 小时限额剩余: %s (重置于 %s)", codex.FormatWindowRemaining(info.PrimaryUsedPercent), info.PrimaryResetsAt.Format(time.RFC3339)))
+		}
+		if !info.SecondaryResetsAt.IsZero() {
+			lines = append(lines, fmt.Sprintf("周限额剩余: %s (重置于 %s)", codex.FormatWindowRemaining(info.SecondaryUsedPercent), info.SecondaryResetsAt.Format(time.RFC3339)))
+		}
+		if session != nil {
+			lines = append(lines, "")
+			lines = append(lines, "当前 bridge 会话：")
+			lines = append(lines, fmt.Sprintf("会话: %s", session.SessionID))
+			lines = append(lines, fmt.Sprintf("目录: %s", session.CWD))
+			lines = append(lines, fmt.Sprintf("模式: %s", modeLabel(language, session.Mode)))
+			lines = append(lines, fmt.Sprintf("范围: %s", scopeLabel(language, session.AccessScope)))
+		}
+	} else {
+		lines = append(lines, "Codex runtime context:")
+		lines = append(lines, fmt.Sprintf("model: %s", emptyFallback(info.Model, "unknown")))
+		lines = append(lines, fmt.Sprintf("reasoning_effort: %s", emptyFallback(info.ReasoningEffort, "unknown")))
+		if info.ContextWindow > 0 {
+			lines = append(lines, fmt.Sprintf("context_remaining: %d / %d", info.ContextRemaining, info.ContextWindow))
+		}
+		if !info.PrimaryResetsAt.IsZero() {
+			lines = append(lines, fmt.Sprintf("5h_window_remaining: %s (resets_at: %s)", codex.FormatWindowRemaining(info.PrimaryUsedPercent), info.PrimaryResetsAt.Format(time.RFC3339)))
+		}
+		if !info.SecondaryResetsAt.IsZero() {
+			lines = append(lines, fmt.Sprintf("weekly_window_remaining: %s (resets_at: %s)", codex.FormatWindowRemaining(info.SecondaryUsedPercent), info.SecondaryResetsAt.Format(time.RFC3339)))
+		}
+		if session != nil {
+			lines = append(lines, "")
+			lines = append(lines, "Current bridge session:")
+			lines = append(lines, fmt.Sprintf("session: %s", session.SessionID))
+			lines = append(lines, fmt.Sprintf("cwd: %s", session.CWD))
+			lines = append(lines, fmt.Sprintf("mode: %s", modeLabel(language, session.Mode)))
+			lines = append(lines, fmt.Sprintf("scope: %s", scopeLabel(language, session.AccessScope)))
+		}
+	}
+	_, err = c.tg.SendMessage(ctx, chatID, strings.Join(lines, "\n"), nil)
 	return err
 }
 
@@ -579,26 +652,6 @@ func (c *Coordinator) commandStop(ctx context.Context, chatID, userID string) er
 		_ = c.store.SaveSession(ctx, *session)
 	}
 	_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Requested cancellation for the current run.", "已经请求取消当前运行。"), nil)
-	return err
-}
-
-func (c *Coordinator) commandPerm(ctx context.Context, chatID, userID string, args []string) error {
-	if len(args) >= 2 && (args[0] == "approve" || args[0] == "deny") {
-		return c.resolveApproval(ctx, chatID, userID, args[1], args[0] == "approve")
-	}
-	actions, err := c.store.ListPendingActions(ctx, true)
-	if err != nil {
-		return err
-	}
-	if len(actions) == 0 {
-		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No pending approvals.", "当前没有待审批请求。"), nil)
-		return err
-	}
-	lines := []string{c.localizedText(ctx, userID, chatID, "Pending approvals:", "待审批请求：")}
-	for _, action := range actions {
-		lines = append(lines, fmt.Sprintf("%s: %s", action.ActionID, action.Payload["summary"]))
-	}
-	_, err = c.tg.SendMessage(ctx, chatID, strings.Join(lines, "\n"), nil)
 	return err
 }
 
@@ -701,22 +754,19 @@ func (c *Coordinator) startRun(ctx context.Context, session model.Session, chatI
 		return err
 	}
 
-	run := codex.Start(ctx, codex.Options{
-		Executable:     c.cfg.CodexExecutable,
-		Prompt:         prompt,
-		ResumeThreadID: session.CodexThreadID,
-		RollingSummary: session.RollingSummary,
-		CWD:            session.CWD,
-		Mode:           session.Mode,
-		ExtraWritable:  policy.AllowedPaths(session),
-		Images:         images,
-	})
+	options, optionCleanups, err := c.buildRunOptions(session, prompt, images)
+	if err != nil {
+		return err
+	}
+	cleanups = append(cleanups, optionCleanups...)
+	run := codex.Start(ctx, options)
 
 	active := &activeRun{
 		SessionID:        session.SessionID,
 		RunID:            runID,
 		ChatID:           chatID,
 		UserID:           userID,
+		Prompt:           prompt,
 		PreviewMessageID: previewID,
 		Runner:           run,
 		Cleanup:          cleanups,
@@ -764,6 +814,9 @@ func (c *Coordinator) handleCodexEvent(ctx context.Context, runID string, event 
 				"text_length": len(event.Text),
 			},
 		})
+		if session.Mode == model.ModePlan {
+			return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, c.localizedText(ctx, c.active.UserID, c.active.ChatID, "Plan draft received. Preparing choices...", "已收到规划草案，正在整理选项..."))
+		}
 		return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, event.Text)
 	case codex.EventApprovalRequest:
 		if c.active.PendingActionID != "" {
@@ -911,6 +964,9 @@ func (c *Coordinator) handleRunFinished(ctx context.Context, runID string, resul
 	if err := c.store.SaveSession(ctx, *session); err != nil {
 		return err
 	}
+	if result.ExitCode == 0 && session.Mode == model.ModePlan {
+		return c.presentPlanResult(ctx, *session, result)
+	}
 	return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, result.FinalMessage)
 }
 
@@ -930,6 +986,12 @@ func (c *Coordinator) resolveApproval(ctx context.Context, chatID, userID, actio
 	if action.UserID != "" && action.UserID != userID {
 		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "This approval does not belong to the current user.", "这个审批不属于当前用户。"), nil)
 		return err
+	}
+	if model.PendingActionType(action.ActionType) == model.ActionPlanChoice {
+		if approve {
+			return c.resolvePlanChoice(ctx, chatID, userID, actionID, -1)
+		}
+		return c.retryPlanChoice(ctx, chatID, userID, actionID)
 	}
 
 	if approve {
@@ -988,6 +1050,90 @@ func (c *Coordinator) resolveApproval(ctx context.Context, chatID, userID, actio
 	return err
 }
 
+func (c *Coordinator) resolvePlanChoice(ctx context.Context, chatID, userID, actionID string, optionIndex int) error {
+	action, plan, session, err := c.loadPlanAction(ctx, chatID, userID, actionID)
+	if err != nil || action == nil || session == nil {
+		return err
+	}
+	if optionIndex < 0 {
+		optionIndex = recommendedPlanOptionIndex(plan)
+	}
+	if optionIndex >= len(plan.Options) {
+		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Plan option not found.", "未找到该规划选项。"), nil)
+		return err
+	}
+	if err := c.store.ResolvePendingAction(ctx, actionID, string(model.ResolutionApproved)); err != nil {
+		return err
+	}
+	selected := plan.Options[optionIndex]
+	_ = c.store.AppendAudit(ctx, model.AuditRecord{
+		SessionID: action.SessionID,
+		ChatID:    chatID,
+		RunID:     action.RunID,
+		EventType: "plan_choice",
+		Payload: map[string]any{
+			"actionId": actionID,
+			"option":   optionIndex + 1,
+			"title":    selected.Title,
+		},
+	})
+	_, _ = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Continuing with plan option %d: %s", "将按规划方案 %d 继续：%s", optionIndex+1, selected.Title), nil)
+	return c.startRunWithMode(ctx, *session, action.ChatID, action.UserID, codex.BuildPlanExecutionPrompt(action.Payload["original_prompt"], plan, optionIndex), nil, nil, model.ModeCode)
+}
+
+func (c *Coordinator) retryPlanChoice(ctx context.Context, chatID, userID, actionID string) error {
+	action, plan, session, err := c.loadPlanAction(ctx, chatID, userID, actionID)
+	if err != nil || action == nil || session == nil {
+		return err
+	}
+	if err := c.store.ResolvePendingAction(ctx, actionID, string(model.ResolutionDenied)); err != nil {
+		return err
+	}
+	_ = c.store.AppendAudit(ctx, model.AuditRecord{
+		SessionID: action.SessionID,
+		ChatID:    chatID,
+		RunID:     action.RunID,
+		EventType: "plan_retry",
+		Payload: map[string]any{
+			"actionId": actionID,
+		},
+	})
+	_, _ = c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Replanning with a different direction.", "将按不同方向重新规划。"), nil)
+	return c.startRunWithMode(ctx, *session, action.ChatID, action.UserID, codex.BuildPlanRetryPrompt(action.Payload["original_prompt"], plan), nil, nil, model.ModePlan)
+}
+
+func (c *Coordinator) loadPlanAction(ctx context.Context, chatID, userID, actionID string) (*model.PendingAction, codex.PlanResponse, *model.Session, error) {
+	action, err := c.store.GetPendingAction(ctx, actionID)
+	if err != nil || action == nil {
+		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Pending plan choice not found.", "未找到待处理的规划选择。"), nil)
+		if err != nil {
+			return nil, codex.PlanResponse{}, nil, err
+		}
+		return nil, codex.PlanResponse{}, nil, sendErr
+	}
+	if action.Resolved {
+		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "This plan choice has already been handled.", "这个规划选择已经处理过了。"), nil)
+		return nil, codex.PlanResponse{}, nil, err
+	}
+	if model.PendingActionType(action.ActionType) != model.ActionPlanChoice {
+		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "This action is not a plan choice.", "这个动作不是规划选择。"), nil)
+		return nil, codex.PlanResponse{}, nil, err
+	}
+	if action.UserID != "" && action.UserID != userID {
+		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "This plan choice does not belong to the current user.", "这个规划选择不属于当前用户。"), nil)
+		return nil, codex.PlanResponse{}, nil, err
+	}
+	plan, err := codex.ParsePlanResponse(action.Payload["plan_json"])
+	if err != nil {
+		return nil, codex.PlanResponse{}, nil, err
+	}
+	session, err := c.store.GetSession(ctx, action.SessionID)
+	if err != nil || session == nil {
+		return nil, codex.PlanResponse{}, nil, err
+	}
+	return action, plan, session, nil
+}
+
 func (c *Coordinator) expirePendingActions(ctx context.Context) error {
 	expired, err := c.store.ExpirePendingActions(ctx, time.Now().UTC())
 	if err != nil {
@@ -995,7 +1141,7 @@ func (c *Coordinator) expirePendingActions(ctx context.Context) error {
 	}
 	for _, action := range expired {
 		session, _ := c.store.GetSession(ctx, action.SessionID)
-		if session != nil {
+		if session != nil && model.PendingActionType(action.ActionType) != model.ActionPlanChoice {
 			session.RunState = model.RunFailed
 			session.ActiveRunID = ""
 			session.LastError = "Approval expired."
@@ -1003,7 +1149,11 @@ func (c *Coordinator) expirePendingActions(ctx context.Context) error {
 			_ = c.store.SaveSession(ctx, *session)
 		}
 		if action.ChatID != "" {
-			_, _ = c.tg.SendMessage(ctx, action.ChatID, c.localizedText(ctx, action.UserID, action.ChatID, "Approval expired. The run was stopped.", "审批已过期，当前运行已停止。"), nil)
+			if model.PendingActionType(action.ActionType) == model.ActionPlanChoice {
+				_, _ = c.tg.SendMessage(ctx, action.ChatID, c.localizedText(ctx, action.UserID, action.ChatID, "Plan choice expired. Send the request again if you still want to continue.", "规划选择已过期。如果还想继续，请重新发送需求。"), nil)
+			} else {
+				_, _ = c.tg.SendMessage(ctx, action.ChatID, c.localizedText(ctx, action.UserID, action.ChatID, "Approval expired. The run was stopped.", "审批已过期，当前运行已停止。"), nil)
+			}
 		}
 		if c.active != nil && c.active.PendingActionID == action.ActionID {
 			c.cleanupActiveRun()
@@ -1012,8 +1162,108 @@ func (c *Coordinator) expirePendingActions(ctx context.Context) error {
 	return nil
 }
 
+func (c *Coordinator) buildRunOptions(session model.Session, prompt string, images []string) (codex.Options, []func(), error) {
+	mode := session.Mode
+	finalPrompt := prompt
+	var cleanups []func()
+	var outputSchemaPath string
+	reasoningEffort, _ := codex.ReadReasoningEffort(c.cfg.CodexHome)
+	approvalPolicy := c.cfg.CodexApprovalPolicy
+	sandboxMode := c.cfg.CodexSandboxMode
+	switch mode {
+	case model.ModeAsk:
+		finalPrompt = buildAskPrompt(prompt)
+		approvalPolicy = "never"
+		sandboxMode = "read-only"
+	case model.ModePlan:
+		approvalPolicy = "never"
+		sandboxMode = "read-only"
+	case model.ModeCode:
+		if session.AccessScope == model.ScopeWorkspace {
+			approvalPolicy = "never"
+			sandboxMode = "workspace-write"
+		}
+	}
+	if mode == model.ModePlan {
+		finalPrompt = codex.BuildPlanPrompt(prompt)
+		schemaPath, cleanup, err := codex.WritePlanSchema(c.cfg.TempDir)
+		if err != nil {
+			return codex.Options{}, nil, err
+		}
+		outputSchemaPath = schemaPath
+		cleanups = append(cleanups, cleanup)
+		if planEffort, err := codex.ReadPlanReasoningEffort(c.cfg.CodexHome); err == nil && strings.TrimSpace(planEffort) != "" {
+			reasoningEffort = planEffort
+		}
+	}
+	return codex.Options{
+		Executable:       c.cfg.CodexExecutable,
+		Prompt:           finalPrompt,
+		ResumeThreadID:   session.CodexThreadID,
+		RollingSummary:   session.RollingSummary,
+		CWD:              session.CWD,
+		Mode:             mode,
+		ReasoningEffort:  reasoningEffort,
+		ApprovalPolicy:   approvalPolicy,
+		SandboxMode:      sandboxMode,
+		OutputSchemaPath: outputSchemaPath,
+		ExtraWritable:    policy.AllowedPaths(session),
+		Images:           images,
+	}, cleanups, nil
+}
+
+func (c *Coordinator) startRunWithMode(ctx context.Context, session model.Session, chatID, userID, prompt string, images []string, cleanups []func(), mode model.SessionMode) error {
+	originalMode := session.Mode
+	session.Mode = mode
+	err := c.startRun(ctx, session, chatID, userID, prompt, images, cleanups)
+	session.Mode = originalMode
+	return err
+}
+
+func (c *Coordinator) presentPlanResult(ctx context.Context, session model.Session, result codex.Result) error {
+	plan, err := codex.ParsePlanResponse(result.FinalMessage)
+	if err != nil {
+		return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, result.FinalMessage)
+	}
+	actionID := "action-" + randomID()
+	if err := c.store.CreatePendingAction(ctx, model.PendingAction{
+		ActionID:        actionID,
+		ActionType:      string(model.ActionPlanChoice),
+		SessionID:       session.SessionID,
+		RunID:           c.active.RunID,
+		ChatID:          c.active.ChatID,
+		UserID:          c.active.UserID,
+		SourceMessageID: fmt.Sprintf("%d", c.active.PreviewMessageID),
+		Payload: map[string]string{
+			"toolName":        "plan_mode",
+			"summary":         plan.Summary,
+			"plan_json":       codex.MarshalPlanResponse(plan),
+			"original_prompt": strings.TrimSpace(c.active.Prompt),
+		},
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}); err != nil {
+		return err
+	}
+	language := c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID)
+	if err := c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, formatPlanMessage(language, plan)); err != nil {
+		return err
+	}
+	_, err = c.tg.SendMessage(ctx, c.active.ChatID, c.localizedText(ctx, c.active.UserID, c.active.ChatID, "Choose a plan to continue:", "请选择一个方案继续："), buildPlanChoiceKeyboard(language, actionID, plan))
+	return err
+}
+
 func (c *Coordinator) helpText(ctx context.Context, userID, chatID string) string {
 	return commandHelpText(c.preferredLanguage(ctx, userID, chatID))
+}
+
+func (c *Coordinator) resetSessionExecutionContext(session *model.Session) {
+	if session == nil {
+		return
+	}
+	session.CodexThreadID = ""
+	session.RollingSummary = ""
+	session.ActiveRunID = ""
+	session.StaleRecovered = false
 }
 
 func (c *Coordinator) cleanupActiveRun() {
