@@ -33,6 +33,8 @@ type Coordinator struct {
 	seenMu        sync.Mutex
 	seenMessages  map[string]time.Time
 	seenCallbacks map[string]time.Time
+	lastVacuumAt  time.Time
+	lastCodexDBAt time.Time
 }
 
 type activeRun struct {
@@ -42,6 +44,8 @@ type activeRun struct {
 	UserID           string
 	Prompt           string
 	PreviewMessageID int64
+	StartedAt        time.Time
+	LastPreviewAt    time.Time
 	Runner           *codex.Run
 	PendingActionID  string
 	StopRequested    bool
@@ -61,6 +65,10 @@ type codexEvent struct {
 type runFinished struct {
 	RunID  string
 	Result codex.Result
+}
+
+type runHeartbeat struct {
+	RunID string
 }
 
 type Observer interface {
@@ -92,6 +100,10 @@ func (c *Coordinator) SetObserver(observer Observer) {
 func (c *Coordinator) Run(ctx context.Context) error {
 	go c.pollTelegram(ctx)
 
+	if err := c.runMaintenance(ctx, time.Now().UTC()); err != nil {
+		c.logger.Warn("startup maintenance failed", "err", err)
+	}
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -117,13 +129,20 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				if err := c.handleRunFinished(ctx, typed.RunID, typed.Result); err != nil {
 					c.logger.Error("handle run finished failed", "err", err)
 				}
+			case runHeartbeat:
+				if err := c.handleRunHeartbeat(ctx, typed.RunID); err != nil {
+					c.logger.Error("handle run heartbeat failed", "err", err)
+				}
 			}
 		case <-ticker.C:
-			c.pruneSeenEntries(time.Now().UTC().Add(-15 * time.Minute))
+			now := time.Now().UTC()
+			c.pruneSeenEntries(now.Add(-15 * time.Minute))
 			if err := c.expirePendingActions(ctx); err != nil {
 				c.logger.Warn("expire approvals failed", "err", err)
 			}
-			_ = c.store.Cleanup(ctx, time.Now().AddDate(0, 0, -c.cfg.ResolvedApprovalRetentionDays), time.Now().AddDate(0, 0, -c.cfg.ExpiredApprovalRetentionDays), c.cfg.MaxAuditRows)
+			if err := c.runMaintenance(ctx, now); err != nil {
+				c.logger.Warn("maintenance failed", "err", err)
+			}
 		}
 	}
 }
@@ -205,12 +224,12 @@ func (c *Coordinator) handleMessage(ctx context.Context, message *telegram.Messa
 	if userID != c.cfg.OwnerUserID {
 		return nil
 	}
-	if c.cfg.OwnerChatID != "" && chatID != c.cfg.OwnerChatID {
-		_, _ = c.tg.SendMessage(ctx, chatID, "This chat is not authorized for the bridge.", nil)
-		return nil
-	}
-	if err := c.store.SetOwnerChatID(ctx, chatID); err != nil {
+	authorized, err := c.ensureAuthorizedChat(ctx, chatID)
+	if err != nil {
 		return err
+	}
+	if !authorized {
+		return nil
 	}
 
 	auth, err := c.store.GetOrCreateTelegramUserAuth(ctx, userID, chatID)
@@ -246,9 +265,20 @@ func (c *Coordinator) handleCallback(ctx context.Context, callback *telegram.Cal
 		_ = c.tg.AnswerCallback(ctx, callback.ID, "Unauthorized.", true)
 		return nil
 	}
+	authorized, err := c.ensureAuthorizedChat(ctx, chatID)
+	if err != nil {
+		return err
+	}
+	if !authorized {
+		_ = c.tg.AnswerCallback(ctx, callback.ID, "Unauthorized.", true)
+		return nil
+	}
 	auth, err := c.store.GetOrCreateTelegramUserAuth(ctx, userID, chatID)
 	if err != nil {
 		return err
+	}
+	if auth.BannedAt != nil {
+		return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "This Telegram user has been blocked locally.", "这个 Telegram 用户已被本地封禁。"), true)
 	}
 
 	data := strings.TrimSpace(callback.Data)
@@ -264,22 +294,145 @@ func (c *Coordinator) handleCallback(ctx context.Context, callback *telegram.Cal
 		if err := c.store.SetPreferredLanguage(ctx, userID, chatID, language); err != nil {
 			return err
 		}
+		if err := c.bindOwnerChatIfNeeded(ctx, chatID, auth); err != nil {
+			return err
+		}
 		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(language, "Language saved.", "语言已保存。"), false); err != nil {
 			return err
 		}
-		_, _ = c.tg.SendMessage(ctx, chatID, localize(language, "Language saved. You can now use /new and start chatting.", "语言已保存。现在可以使用 /new 开始聊天。"), nil)
-		return nil
+		return c.sendHomeCard(ctx, chatID, userID, localize(language, "Language saved. You can now start from the controls below.", "语言已保存。现在可以通过下面的入口开始使用。"))
+	case data == callbackNavNew:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		c.appendAudit(ctx, model.AuditRecord{
+			ChatID:    chatID,
+			SessionID: c.currentSessionID(ctx),
+			EventType: "ui_nav",
+			Payload:   map[string]any{"target": "new_session"},
+		})
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Creating session.", "正在创建会话。"), false); err != nil {
+			return err
+		}
+		return c.commandNew(ctx, chatID, userID, nil)
+	case data == callbackNavSessions:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		c.appendAudit(ctx, model.AuditRecord{
+			ChatID:    chatID,
+			SessionID: c.currentSessionID(ctx),
+			EventType: "ui_nav",
+			Payload:   map[string]any{"target": "recent_sessions"},
+		})
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Opening recent sessions.", "正在打开最近会话。"), false); err != nil {
+			return err
+		}
+		return c.sendRecentSessionsCard(ctx, chatID, userID)
+	case data == callbackNavStatus:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Opening status.", "正在打开状态。"), false); err != nil {
+			return err
+		}
+		return c.sendStatusCard(ctx, chatID, userID)
+	case data == callbackNavHelp:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Opening help.", "正在打开帮助。"), false); err != nil {
+			return err
+		}
+		return c.sendHelpCard(ctx, chatID, userID)
+	case data == callbackRunStop:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Stopping current run.", "正在停止当前运行。"), false); err != nil {
+			return err
+		}
+		return c.commandStop(ctx, chatID, userID)
+	case data == callbackModeShow:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Opening mode picker.", "正在打开模式选择。"), false); err != nil {
+			return err
+		}
+		return c.sendModePicker(ctx, chatID, userID)
+	case strings.HasPrefix(data, "mode:set:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		value := strings.TrimPrefix(data, "mode:set:")
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Mode updated.", "模式已更新。"), false); err != nil {
+			return err
+		}
+		return c.commandMode(ctx, chatID, userID, []string{value})
+	case data == callbackScopeShow:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Opening scope picker.", "正在打开范围选择。"), false); err != nil {
+			return err
+		}
+		return c.sendScopePicker(ctx, chatID, userID)
+	case strings.HasPrefix(data, "scope:set:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		value := strings.TrimPrefix(data, "scope:set:")
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Scope updated.", "范围已更新。"), false); err != nil {
+			return err
+		}
+		return c.commandScope(ctx, chatID, userID, []string{value})
+	case data == callbackThinkShow:
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Opening think picker.", "正在打开思考强度选择。"), false); err != nil {
+			return err
+		}
+		return c.sendThinkPicker(ctx, chatID, userID)
+	case strings.HasPrefix(data, "think:set:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		value := strings.TrimPrefix(data, "think:set:")
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Think level updated.", "思考强度已更新。"), false); err != nil {
+			return err
+		}
+		return c.commandThink(ctx, chatID, userID, []string{value})
+	case strings.HasPrefix(data, "sess:switch:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
+		sessionID := strings.TrimPrefix(data, "sess:switch:")
+		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Switching session.", "正在切换会话。"), false); err != nil {
+			return err
+		}
+		return c.switchSession(ctx, chatID, userID, sessionID)
 	case strings.HasPrefix(data, "pa:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
 		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Received.", "已收到。"), false); err != nil {
 			return err
 		}
 		return c.resolveApproval(ctx, chatID, userID, strings.TrimPrefix(data, "pa:"), true)
 	case strings.HasPrefix(data, "pd:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
 		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Received.", "已收到。"), false); err != nil {
 			return err
 		}
 		return c.resolveApproval(ctx, chatID, userID, strings.TrimPrefix(data, "pd:"), false)
 	case strings.HasPrefix(data, "pc:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
 		actionID, optionIndex, ok := parsePlanChoiceCallback(data)
 		if !ok {
 			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Invalid plan option.", "无效的规划选项。"), true)
@@ -289,6 +442,9 @@ func (c *Coordinator) handleCallback(ctx context.Context, callback *telegram.Cal
 		}
 		return c.resolvePlanChoice(ctx, chatID, userID, actionID, optionIndex)
 	case strings.HasPrefix(data, "pr:"):
+		if c.requiresVerification() && auth.VerifiedAt == nil {
+			return c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Verification required.", "需要先完成验证。"), true)
+		}
 		if err := c.tg.AnswerCallback(ctx, callback.ID, localize(auth.PreferredLanguage, "Replanning.", "正在重新规划。"), false); err != nil {
 			return err
 		}
@@ -314,6 +470,13 @@ func (c *Coordinator) handleVerificationAndLanguage(ctx context.Context, auth *m
 		}
 		if policy.VerifyPassword(text, c.cfg.VerificationPasswordHash) {
 			if err := c.store.MarkVerified(ctx, userID, chatID); err != nil {
+				return true, err
+			}
+			now := time.Now().UTC()
+			auth.VerifiedAt = &now
+			auth.BannedAt = nil
+			auth.FailedAttempts = 0
+			if err := c.bindOwnerChatIfNeeded(ctx, chatID, auth); err != nil {
 				return true, err
 			}
 			return true, c.sendLanguagePicker(ctx, chatID)
@@ -343,6 +506,9 @@ func (c *Coordinator) handleVerificationAndLanguage(ctx context.Context, auth *m
 				{Text: "English", CallbackData: "lang:en"},
 			}},
 		})
+		return true, err
+	}
+	if err := c.bindOwnerChatIfNeeded(ctx, chatID, auth); err != nil {
 		return true, err
 	}
 	return false, nil
@@ -378,11 +544,9 @@ func (c *Coordinator) handleCommand(ctx context.Context, chatID, userID, text st
 
 	switch cmd {
 	case "/start":
-		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Codex + Telegram Bridge is available. Use /new to create a session or /help to see commands.", "Codex + Telegram Bridge 已可用。使用 /new 创建会话，或用 /help 查看命令。"), nil)
-		return err
+		return c.sendHomeCard(ctx, chatID, userID, "")
 	case "/help":
-		_, err := c.tg.SendMessage(ctx, chatID, c.helpText(ctx, userID, chatID), nil)
-		return err
+		return c.sendHelpCard(ctx, chatID, userID)
 	case "/new":
 		return c.commandNew(ctx, chatID, userID, args)
 	case "/reset":
@@ -421,7 +585,7 @@ func (c *Coordinator) commandNew(ctx context.Context, chatID, userID string, arg
 		probe := model.Session{
 			WorkspaceRoot: root,
 			CWD:           root,
-			AccessScope:   model.ScopeWorkspace,
+			AccessScope:   model.ScopeSystem,
 		}
 		cwd, err = policy.ResolveDirectory(probe, strings.Join(args, " "))
 		if err != nil {
@@ -436,7 +600,7 @@ func (c *Coordinator) commandNew(ctx context.Context, chatID, userID string, arg
 		ExtraAllowedDirs: []string{},
 		CWD:              cwd,
 		Mode:             model.ModeCode,
-		AccessScope:      model.ScopeWorkspace,
+		AccessScope:      model.ScopeSystem,
 		RunState:         model.RunIdle,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -447,14 +611,20 @@ func (c *Coordinator) commandNew(ctx context.Context, chatID, userID string, arg
 	if err := c.store.SetCurrentSessionID(ctx, session.SessionID); err != nil {
 		return err
 	}
-	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Created and switched to %s\ncwd: %s\nscope: %s", "已创建并切换到 %s\n目录: %s\n范围: %s", session.SessionID, session.CWD, session.AccessScope), nil)
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: session.SessionID,
+		ChatID:    chatID,
+		EventType: "ui_nav",
+		Payload:   map[string]any{"target": "new_session_created"},
+	})
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Created and switched to %s\ncwd: %s\nscope: %s", "已创建并切换到 %s\n目录: %s\n范围: %s", session.SessionID, session.CWD, session.AccessScope), buildHomeKeyboard(c.preferredLanguage(ctx, userID, chatID), &session))
 	return err
 }
 
 func (c *Coordinator) commandReset(ctx context.Context, chatID, userID string) error {
 	session, err := c.store.GetCurrentSession(ctx)
 	if err != nil || session == nil {
-		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No session is selected. Run /new first.", "当前没有选中的会话，请先执行 /new。"), nil)
+		sendErr := c.sendNoSessionCard(ctx, chatID, userID, "")
 		if err != nil {
 			return err
 		}
@@ -478,7 +648,7 @@ func (c *Coordinator) commandReset(ctx context.Context, chatID, userID string) e
 func (c *Coordinator) commandCD(ctx context.Context, chatID, userID, requested string) error {
 	session, err := c.store.GetCurrentSession(ctx)
 	if err != nil || session == nil {
-		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No session is selected. Run /new first.", "当前没有选中的会话，请先执行 /new。"), nil)
+		sendErr := c.sendNoSessionCard(ctx, chatID, userID, "")
 		if err != nil {
 			return err
 		}
@@ -502,15 +672,14 @@ func (c *Coordinator) commandCD(ctx context.Context, chatID, userID, requested s
 func (c *Coordinator) commandMode(ctx context.Context, chatID, userID string, args []string) error {
 	session, err := c.store.GetCurrentSession(ctx)
 	if err != nil || session == nil {
-		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No session is selected. Run /new first.", "当前没有选中的会话，请先执行 /new。"), nil)
+		sendErr := c.sendNoSessionCard(ctx, chatID, userID, "")
 		if err != nil {
 			return err
 		}
 		return sendErr
 	}
 	if len(args) == 0 {
-		_, err := c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Current mode: %s", "当前模式：%s", modeLabel(c.preferredLanguage(ctx, userID, chatID), session.Mode)), nil)
-		return err
+		return c.sendModePicker(ctx, chatID, userID)
 	}
 	switch args[0] {
 	case string(model.ModeAsk), string(model.ModePlan), string(model.ModeCode):
@@ -524,22 +693,30 @@ func (c *Coordinator) commandMode(ctx context.Context, chatID, userID string, ar
 	if err := c.store.SaveSession(ctx, *session); err != nil {
 		return err
 	}
-	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Mode updated to %s\nCodex thread reset so the next run uses the new mode.", "模式已更新为 %s\nCodex 线程已重置，下一次运行会使用新模式。", modeLabel(c.preferredLanguage(ctx, userID, chatID), session.Mode)), nil)
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: session.SessionID,
+		ChatID:    chatID,
+		EventType: "ui_setting_change",
+		Payload: map[string]any{
+			"setting": "mode",
+			"value":   string(session.Mode),
+		},
+	})
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Mode updated to %s\nCodex thread reset so the next run uses the new mode.", "模式已更新为 %s\nCodex 线程已重置，下一次运行会使用新模式。", modeLabel(c.preferredLanguage(ctx, userID, chatID), session.Mode)), buildStatusKeyboard(c.preferredLanguage(ctx, userID, chatID), session))
 	return err
 }
 
 func (c *Coordinator) commandScope(ctx context.Context, chatID, userID string, args []string) error {
 	session, err := c.store.GetCurrentSession(ctx)
 	if err != nil || session == nil {
-		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No session is selected. Run /new first.", "当前没有选中的会话，请先执行 /new。"), nil)
+		sendErr := c.sendNoSessionCard(ctx, chatID, userID, "")
 		if err != nil {
 			return err
 		}
 		return sendErr
 	}
 	if len(args) == 0 {
-		_, err := c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Current scope: %s", "当前范围：%s", scopeLabel(c.preferredLanguage(ctx, userID, chatID), session.AccessScope)), nil)
-		return err
+		return c.sendScopePicker(ctx, chatID, userID)
 	}
 	switch args[0] {
 	case string(model.ScopeWorkspace), string(model.ScopeSystem):
@@ -553,7 +730,16 @@ func (c *Coordinator) commandScope(ctx context.Context, chatID, userID string, a
 	if err := c.store.SaveSession(ctx, *session); err != nil {
 		return err
 	}
-	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Scope updated to %s\nCodex thread reset so the next run uses the new scope.", "范围已更新为 %s\nCodex 线程已重置，下一次运行会使用新范围。", scopeLabel(c.preferredLanguage(ctx, userID, chatID), session.AccessScope)), nil)
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: session.SessionID,
+		ChatID:    chatID,
+		EventType: "ui_setting_change",
+		Payload: map[string]any{
+			"setting": "scope",
+			"value":   string(session.AccessScope),
+		},
+	})
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Scope updated to %s\nCodex thread reset so the next run uses the new scope.", "范围已更新为 %s\nCodex 线程已重置，下一次运行会使用新范围。", scopeLabel(c.preferredLanguage(ctx, userID, chatID), session.AccessScope)), buildStatusKeyboard(c.preferredLanguage(ctx, userID, chatID), session))
 	return err
 }
 
@@ -613,22 +799,13 @@ func (c *Coordinator) commandContext(ctx context.Context, chatID, userID string)
 }
 
 func (c *Coordinator) commandStatus(ctx context.Context, chatID, userID string) error {
-	session, err := c.store.GetCurrentSession(ctx)
-	if err != nil || session == nil {
-		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No session is selected. Run /new first.", "当前没有选中的会话，请先执行 /new。"), nil)
-		if err != nil {
-			return err
-		}
-		return sendErr
-	}
-	text := statusText(c.preferredLanguage(ctx, userID, chatID), *session)
-	_, err = c.tg.SendMessage(ctx, chatID, text, nil)
-	return err
+	return c.sendStatusCard(ctx, chatID, userID)
 }
 
 func (c *Coordinator) commandStop(ctx context.Context, chatID, userID string) error {
 	if c.active == nil {
-		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No active run.", "当前没有正在运行的任务。"), nil)
+		session, _ := c.store.GetCurrentSession(ctx)
+		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No active run.", "当前没有正在运行的任务。"), buildStatusKeyboard(c.preferredLanguage(ctx, userID, chatID), session))
 		return err
 	}
 	c.active.StopRequested = true
@@ -651,21 +828,13 @@ func (c *Coordinator) commandStop(ctx context.Context, chatID, userID string) er
 		session.UpdatedAt = time.Now().UTC()
 		_ = c.store.SaveSession(ctx, *session)
 	}
-	_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Requested cancellation for the current run.", "已经请求取消当前运行。"), nil)
+	_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Requested cancellation for the current run.", "已经请求取消当前运行。"), buildBusyKeyboard(c.preferredLanguage(ctx, userID, chatID)))
 	return err
 }
 
 func (c *Coordinator) commandThink(ctx context.Context, chatID, userID string, args []string) error {
 	if len(args) == 0 {
-		current, err := codex.ReadReasoningEffort(c.cfg.CodexHome)
-		if err != nil {
-			return err
-		}
-		if current == "" {
-			current = "unset"
-		}
-		_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Current think level: %s", "当前思考强度：%s", current), nil)
-		return err
+		return c.sendThinkPicker(ctx, chatID, userID)
 	}
 	requested := strings.TrimSpace(args[0])
 	if !codex.IsReasoningEffort(requested) {
@@ -675,22 +844,30 @@ func (c *Coordinator) commandThink(ctx context.Context, chatID, userID string, a
 	if err := codex.WriteReasoningEffort(c.cfg.CodexHome, requested); err != nil {
 		return err
 	}
-	_, err := c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Updated think level to %s.", "思考强度已更新为 %s。", requested), nil)
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: c.currentSessionID(ctx),
+		ChatID:    chatID,
+		EventType: "ui_setting_change",
+		Payload: map[string]any{
+			"setting": "think",
+			"value":   requested,
+		},
+	})
+	_, err := c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Updated think level to %s.", "思考强度已更新为 %s。", requested), buildThinkKeyboard(c.preferredLanguage(ctx, userID, chatID), requested))
 	return err
 }
 
 func (c *Coordinator) handleUserInput(ctx context.Context, chatID, userID string, message *telegram.Message) error {
 	session, err := c.store.GetCurrentSession(ctx)
 	if err != nil || session == nil {
-		_, sendErr := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "No session is selected. Run /new first.", "当前没有选中的会话，请先执行 /new。"), nil)
+		sendErr := c.sendNoSessionCard(ctx, chatID, userID, "")
 		if err != nil {
 			return err
 		}
 		return sendErr
 	}
 	if c.active != nil || session.RunState == model.RunRunning || session.RunState == model.RunWaitingApproval || session.RunState == model.RunCancelling {
-		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "This session is already busy. Use /stat or /stop.", "当前会话正忙，请使用 /stat 或 /stop。"), nil)
-		return err
+		return c.sendBusyCard(ctx, chatID, userID, *session)
 	}
 
 	prompt := strings.TrimSpace(message.Text)
@@ -740,7 +917,8 @@ func (c *Coordinator) handleUserInput(ctx context.Context, chatID, userID string
 }
 
 func (c *Coordinator) startRun(ctx context.Context, session model.Session, chatID, userID, prompt string, images []string, cleanups []func()) error {
-	previewID, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Running Codex...", "Codex 正在运行..."), nil)
+	startedAt := time.Now().UTC()
+	previewID, err := c.tg.SendMessage(ctx, chatID, formatRunProgressText(c.preferredLanguage(ctx, userID, chatID), session, localize(c.preferredLanguage(ctx, userID, chatID), "Starting", "启动中"), "", startedAt, startedAt), nil)
 	if err != nil {
 		return err
 	}
@@ -768,9 +946,19 @@ func (c *Coordinator) startRun(ctx context.Context, session model.Session, chatI
 		UserID:           userID,
 		Prompt:           prompt,
 		PreviewMessageID: previewID,
+		StartedAt:        startedAt,
+		LastPreviewAt:    startedAt,
 		Runner:           run,
 		Cleanup:          cleanups,
 	}
+	heartbeatStop := make(chan struct{})
+	active.Cleanup = append(active.Cleanup, func() {
+		select {
+		case <-heartbeatStop:
+		default:
+			close(heartbeatStop)
+		}
+	})
 	c.active = active
 	if c.observer != nil {
 		c.observer.RunStarted(session.SessionID, runID)
@@ -786,6 +974,20 @@ func (c *Coordinator) startRun(ctx context.Context, session model.Session, chatI
 			c.events <- runFinished{RunID: runID, Result: result}
 		}
 	}(runID, run)
+	go func(runID string, stop <-chan struct{}) {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.events <- runHeartbeat{RunID: runID}
+			}
+		}
+	}(runID, heartbeatStop)
 
 	return nil
 }
@@ -803,7 +1005,10 @@ func (c *Coordinator) handleCodexEvent(ctx context.Context, runID string, event 
 	case codex.EventThreadStarted:
 		session.CodexThreadID = event.ThreadID
 		session.UpdatedAt = time.Now().UTC()
-		return c.store.SaveSession(ctx, *session)
+		if err := c.store.SaveSession(ctx, *session); err != nil {
+			return err
+		}
+		return c.updatePreview(ctx, *session, localize(c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID), "Thread connected", "已连接执行线程"), "")
 	case codex.EventAgentMessage:
 		_ = c.store.AppendAudit(ctx, model.AuditRecord{
 			SessionID: session.SessionID,
@@ -815,9 +1020,9 @@ func (c *Coordinator) handleCodexEvent(ctx context.Context, runID string, event 
 			},
 		})
 		if session.Mode == model.ModePlan {
-			return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, c.localizedText(ctx, c.active.UserID, c.active.ChatID, "Plan draft received. Preparing choices...", "已收到规划草案，正在整理选项..."))
+			return c.editPreviewMessage(ctx, c.localizedText(ctx, c.active.UserID, c.active.ChatID, "Plan draft received. Preparing choices...", "已收到规划草案，正在整理选项..."))
 		}
-		return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, event.Text)
+		return c.editPreviewMessage(ctx, event.Text)
 	case codex.EventApprovalRequest:
 		if c.active.PendingActionID != "" {
 			return nil
@@ -848,7 +1053,7 @@ func (c *Coordinator) handleCodexEvent(ctx context.Context, runID string, event 
 		if c.observer != nil {
 			c.observer.ApprovalRequested(session.SessionID, c.active.RunID, actionID, event.Summary)
 		}
-		if err := c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, c.localizedTextf(ctx, c.active.UserID, c.active.ChatID, "Waiting for approval: %s", "等待审批：%s", event.Summary)); err != nil {
+		if err := c.updatePreview(ctx, *session, localize(c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID), "Waiting for approval", "等待审批"), event.Summary); err != nil {
 			c.logger.Warn("preview update failed", "err", err)
 		}
 		_, err := c.tg.SendMessage(ctx, c.active.ChatID, c.localizedTextf(ctx, c.active.UserID, c.active.ChatID, "Codex needs approval before it can continue.\nCommand: %s\nPermission ID: %s", "Codex 继续执行前需要审批。\n命令：%s\n审批 ID：%s", event.Summary, actionID), &telegram.InlineKeyboardMarkup{
@@ -871,6 +1076,7 @@ func (c *Coordinator) handleCodexEvent(ctx context.Context, runID string, event 
 				"command": strings.Join(event.Command, " "),
 			},
 		})
+		return c.updatePreview(ctx, *session, localize(c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID), "Running command", "正在执行命令"), strings.Join(event.Command, " "))
 	case codex.EventExecEnd:
 		_ = c.store.AppendAudit(ctx, model.AuditRecord{
 			SessionID: session.SessionID,
@@ -893,6 +1099,7 @@ func (c *Coordinator) handleCodexEvent(ctx context.Context, runID string, event 
 				"paths": strings.Join(event.ChangedPaths, ", "),
 			},
 		})
+		return c.updatePreview(ctx, *session, localize(c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID), "Applying patch", "正在修改文件"), summarizeChangedPaths(event.ChangedPaths))
 	}
 	return nil
 }
@@ -934,7 +1141,7 @@ func (c *Coordinator) handleRunFinished(ctx context.Context, runID string, resul
 		if err := c.store.SaveSession(ctx, *session); err != nil {
 			return err
 		}
-		return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, result.FinalMessage)
+		return c.finalizeRunMessage(ctx, result.FinalMessage)
 	}
 
 	session.ActiveRunID = ""
@@ -967,7 +1174,7 @@ func (c *Coordinator) handleRunFinished(ctx context.Context, runID string, resul
 	if result.ExitCode == 0 && session.Mode == model.ModePlan {
 		return c.presentPlanResult(ctx, *session, result)
 	}
-	return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, result.FinalMessage)
+	return c.finalizeRunMessage(ctx, result.FinalMessage)
 }
 
 func (c *Coordinator) resolveApproval(ctx context.Context, chatID, userID, actionID string, approve bool) error {
@@ -1223,7 +1430,7 @@ func (c *Coordinator) startRunWithMode(ctx context.Context, session model.Sessio
 func (c *Coordinator) presentPlanResult(ctx context.Context, session model.Session, result codex.Result) error {
 	plan, err := codex.ParsePlanResponse(result.FinalMessage)
 	if err != nil {
-		return c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, result.FinalMessage)
+		return c.finalizeRunMessage(ctx, result.FinalMessage)
 	}
 	actionID := "action-" + randomID()
 	if err := c.store.CreatePendingAction(ctx, model.PendingAction{
@@ -1245,7 +1452,7 @@ func (c *Coordinator) presentPlanResult(ctx context.Context, session model.Sessi
 		return err
 	}
 	language := c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID)
-	if err := c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, formatPlanMessage(language, plan)); err != nil {
+	if err := c.editPreviewMessage(ctx, formatPlanMessage(language, plan)); err != nil {
 		return err
 	}
 	_, err = c.tg.SendMessage(ctx, c.active.ChatID, c.localizedText(ctx, c.active.UserID, c.active.ChatID, "Choose a plan to continue:", "请选择一个方案继续："), buildPlanChoiceKeyboard(language, actionID, plan))
@@ -1287,6 +1494,212 @@ func (c *Coordinator) currentSessionID(ctx context.Context) string {
 	return value
 }
 
+func (c *Coordinator) appendAudit(ctx context.Context, audit model.AuditRecord) {
+	_ = c.store.AppendAudit(ctx, audit)
+}
+
+func (c *Coordinator) sendHomeCard(ctx context.Context, chatID, userID, prefix string) error {
+	session, err := c.store.GetCurrentSession(ctx)
+	if err != nil {
+		return err
+	}
+	language := c.preferredLanguage(ctx, userID, chatID)
+	text := formatHomeText(language, session)
+	if strings.TrimSpace(prefix) != "" {
+		text = strings.TrimSpace(prefix) + "\n\n" + text
+	}
+	_, err = c.tg.SendMessage(ctx, chatID, text, buildHomeKeyboard(language, session))
+	return err
+}
+
+func (c *Coordinator) sendHelpCard(ctx context.Context, chatID, userID string) error {
+	_, err := c.tg.SendMessage(ctx, chatID, c.helpText(ctx, userID, chatID), buildNoSessionKeyboard(c.preferredLanguage(ctx, userID, chatID)))
+	return err
+}
+
+func (c *Coordinator) sendNoSessionCard(ctx context.Context, chatID, userID, prefix string) error {
+	language := c.preferredLanguage(ctx, userID, chatID)
+	text := formatNoSessionText(language)
+	if strings.TrimSpace(prefix) != "" {
+		text = strings.TrimSpace(prefix) + "\n\n" + text
+	}
+	c.appendAudit(ctx, model.AuditRecord{
+		ChatID:    chatID,
+		EventType: "ui_recovery",
+		Payload:   map[string]any{"reason": "no_session"},
+	})
+	_, err := c.tg.SendMessage(ctx, chatID, text, buildNoSessionKeyboard(language))
+	return err
+}
+
+func (c *Coordinator) sendBusyCard(ctx context.Context, chatID, userID string, session model.Session) error {
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: session.SessionID,
+		ChatID:    chatID,
+		EventType: "ui_recovery",
+		Payload:   map[string]any{"reason": "busy"},
+	})
+	_, err := c.tg.SendMessage(ctx, chatID, formatBusyText(c.preferredLanguage(ctx, userID, chatID), session), buildBusyKeyboard(c.preferredLanguage(ctx, userID, chatID)))
+	return err
+}
+
+func (c *Coordinator) sendStatusCard(ctx context.Context, chatID, userID string) error {
+	session, err := c.store.GetCurrentSession(ctx)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return c.sendNoSessionCard(ctx, chatID, userID, "")
+	}
+	_, err = c.tg.SendMessage(ctx, chatID, statusText(c.preferredLanguage(ctx, userID, chatID), *session), buildStatusKeyboard(c.preferredLanguage(ctx, userID, chatID), session))
+	return err
+}
+
+func (c *Coordinator) sendRecentSessionsCard(ctx context.Context, chatID, userID string) error {
+	sessions, err := c.store.ListSessions(ctx)
+	if err != nil {
+		return err
+	}
+	if len(sessions) > 5 {
+		sessions = sessions[:5]
+	}
+	currentSessionID := c.currentSessionID(ctx)
+	language := c.preferredLanguage(ctx, userID, chatID)
+	_, err = c.tg.SendMessage(ctx, chatID, formatRecentSessionsText(language, currentSessionID, sessions), buildRecentSessionsKeyboard(language, currentSessionID, sessions))
+	return err
+}
+
+func (c *Coordinator) sendModePicker(ctx context.Context, chatID, userID string) error {
+	session, err := c.store.GetCurrentSession(ctx)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return c.sendNoSessionCard(ctx, chatID, userID, "")
+	}
+	language := c.preferredLanguage(ctx, userID, chatID)
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Choose the mode for session %s.\nCurrent mode: %s", "请选择会话 %s 的模式。\n当前模式：%s", session.SessionID, modeLabel(language, session.Mode)), buildModeKeyboard(language, session.Mode))
+	return err
+}
+
+func (c *Coordinator) sendScopePicker(ctx context.Context, chatID, userID string) error {
+	session, err := c.store.GetCurrentSession(ctx)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return c.sendNoSessionCard(ctx, chatID, userID, "")
+	}
+	language := c.preferredLanguage(ctx, userID, chatID)
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Choose the scope for session %s.\nCurrent scope: %s", "请选择会话 %s 的范围。\n当前范围：%s", session.SessionID, scopeLabel(language, session.AccessScope)), buildScopeKeyboard(language, session.AccessScope))
+	return err
+}
+
+func (c *Coordinator) sendThinkPicker(ctx context.Context, chatID, userID string) error {
+	current, err := codex.ReadReasoningEffort(c.cfg.CodexHome)
+	if err != nil {
+		return err
+	}
+	if current == "" {
+		current = "medium"
+	}
+	language := c.preferredLanguage(ctx, userID, chatID)
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Choose the global think level.\nCurrent level: %s", "请选择全局思考强度。\n当前强度：%s", current), buildThinkKeyboard(language, current))
+	return err
+}
+
+func (c *Coordinator) switchSession(ctx context.Context, chatID, userID, sessionID string) error {
+	session, err := c.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		_, err := c.tg.SendMessage(ctx, chatID, c.localizedText(ctx, userID, chatID, "Session not found.", "未找到该会话。"), buildNoSessionKeyboard(c.preferredLanguage(ctx, userID, chatID)))
+		return err
+	}
+	if err := c.store.SetCurrentSessionID(ctx, sessionID); err != nil {
+		return err
+	}
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: sessionID,
+		ChatID:    chatID,
+		EventType: "session_switch",
+		Payload:   map[string]any{"session_id": sessionID},
+	})
+	_, err = c.tg.SendMessage(ctx, chatID, c.localizedTextf(ctx, userID, chatID, "Switched to %s.", "已切换到 %s。", sessionID)+"\n\n"+statusText(c.preferredLanguage(ctx, userID, chatID), *session), buildStatusKeyboard(c.preferredLanguage(ctx, userID, chatID), session))
+	return err
+}
+
+func (c *Coordinator) updatePreview(ctx context.Context, session model.Session, stage, detail string) error {
+	if c.active == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	text := formatRunProgressText(c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID), session, stage, detail, c.active.StartedAt, now)
+	if err := c.editPreviewMessage(ctx, text); err != nil {
+		return err
+	}
+	c.active.LastPreviewAt = now
+	return nil
+}
+
+func (c *Coordinator) editPreviewMessage(ctx context.Context, text string) error {
+	if c.active == nil {
+		return nil
+	}
+	err := c.tg.EditMessageText(ctx, c.active.ChatID, c.active.PreviewMessageID, text)
+	if telegram.IsMessageNotModifiedError(err) {
+		return nil
+	}
+	return err
+}
+
+func (c *Coordinator) finalizeRunMessage(ctx context.Context, text string) error {
+	if err := c.editPreviewMessage(ctx, text); err == nil {
+		return nil
+	} else {
+		_, sendErr := c.tg.SendMessage(ctx, c.active.ChatID, text, nil)
+		if sendErr == nil {
+			c.logger.Warn("preview edit failed; sent standalone completion message", "err", err, "run_id", c.active.RunID)
+			return nil
+		}
+		return fmt.Errorf("edit preview failed: %w; fallback send failed: %v", err, sendErr)
+	}
+}
+
+func (c *Coordinator) handleRunHeartbeat(ctx context.Context, runID string) error {
+	if c.active == nil || c.active.RunID != runID || c.active.PendingActionID != "" {
+		return nil
+	}
+	if time.Since(c.active.LastPreviewAt) < 15*time.Second {
+		return nil
+	}
+	session, err := c.store.GetSession(ctx, c.active.SessionID)
+	if err != nil || session == nil {
+		return err
+	}
+	c.appendAudit(ctx, model.AuditRecord{
+		SessionID: session.SessionID,
+		ChatID:    c.active.ChatID,
+		RunID:     c.active.RunID,
+		EventType: "run_heartbeat",
+		Payload: map[string]any{
+			"elapsed_seconds": int(time.Since(c.active.StartedAt).Seconds()),
+		},
+	})
+	return c.updatePreview(ctx, *session, localize(c.preferredLanguage(ctx, c.active.UserID, c.active.ChatID), "Still working", "仍在处理中"), "")
+}
+
+func summarizeChangedPaths(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	if len(paths) <= 3 {
+		return strings.Join(paths, ", ")
+	}
+	return strings.Join(paths[:3], ", ") + fmt.Sprintf(" +%d", len(paths)-3)
+}
+
 func randomID() string {
 	var raw [8]byte
 	_, _ = rand.Read(raw[:])
@@ -1313,7 +1726,7 @@ func (c *Coordinator) markMessageSeen(chatID string, messageID int64) bool {
 }
 
 func (c *Coordinator) preferredLanguage(ctx context.Context, userID, chatID string) string {
-	auth, err := c.store.GetOrCreateTelegramUserAuth(ctx, userID, chatID)
+	auth, err := c.store.GetTelegramUserAuth(ctx, userID)
 	if err != nil || auth == nil {
 		return "en"
 	}
@@ -1364,4 +1777,110 @@ func (c *Coordinator) pruneSeenEntries(cutoff time.Time) {
 			delete(c.seenCallbacks, key)
 		}
 	}
+}
+
+func (c *Coordinator) runMaintenance(ctx context.Context, now time.Time) error {
+	if _, err := c.authorizedChatID(ctx); err != nil {
+		return err
+	}
+	resolvedRetentionDays := c.cfg.ResolvedApprovalRetentionDays
+	if resolvedRetentionDays <= 0 {
+		resolvedRetentionDays = 7
+	}
+	expiredRetentionDays := c.cfg.ExpiredApprovalRetentionDays
+	if expiredRetentionDays <= 0 {
+		expiredRetentionDays = 1
+	}
+	maxAuditRows := c.cfg.MaxAuditRows
+	if maxAuditRows <= 0 {
+		maxAuditRows = 1000
+	}
+	maxSessionRows := c.cfg.MaxSessionRows
+	if maxSessionRows <= 0 {
+		maxSessionRows = 100
+	}
+	if err := c.store.Cleanup(ctx, now.AddDate(0, 0, -resolvedRetentionDays), now.AddDate(0, 0, -expiredRetentionDays), maxAuditRows); err != nil {
+		return err
+	}
+	currentSessionID, err := c.store.GetCurrentSessionID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := c.store.PruneSessions(ctx, currentSessionID, maxSessionRows); err != nil {
+		return err
+	}
+	if err := cleanupBridgeRuntimeFiles(c.cfg, now); err != nil {
+		return err
+	}
+	if err := cleanupCodexArtifacts(c.cfg.CodexHome, now); err != nil {
+		return err
+	}
+
+	vacuumHours := c.cfg.DBVacuumIntervalHours
+	if vacuumHours <= 0 {
+		vacuumHours = 24
+	}
+	if c.lastVacuumAt.IsZero() || now.Sub(c.lastVacuumAt) >= time.Duration(vacuumHours)*time.Hour {
+		if err := c.store.Vacuum(ctx); err != nil {
+			return err
+		}
+		c.lastVacuumAt = now
+	}
+	if c.lastCodexDBAt.IsZero() || now.Sub(c.lastCodexDBAt) >= 24*time.Hour {
+		if err := checkpointCodexStateDBs(c.cfg.CodexHome); err != nil {
+			return err
+		}
+		c.lastCodexDBAt = now
+	}
+	return nil
+}
+
+func (c *Coordinator) ensureAuthorizedChat(ctx context.Context, chatID string) (bool, error) {
+	authorizedChatID, err := c.authorizedChatID(ctx)
+	if err != nil {
+		return false, err
+	}
+	if authorizedChatID == "" || authorizedChatID == chatID {
+		return true, nil
+	}
+	_, _ = c.tg.SendMessage(ctx, chatID, "This chat is not authorized for the bridge.", nil)
+	return false, nil
+}
+
+func (c *Coordinator) authorizedChatID(ctx context.Context) (string, error) {
+	if strings.TrimSpace(c.cfg.OwnerChatID) != "" {
+		return strings.TrimSpace(c.cfg.OwnerChatID), nil
+	}
+	stored, err := c.store.GetOwnerChatID(ctx)
+	if err != nil || stored != "" {
+		return stored, err
+	}
+	auth, err := c.store.GetTelegramUserAuth(ctx, c.cfg.OwnerUserID)
+	if err != nil || auth == nil || strings.TrimSpace(auth.LatestChatID) == "" {
+		return "", err
+	}
+	if c.requiresVerification() && auth.VerifiedAt == nil {
+		return "", nil
+	}
+	if err := c.store.SetOwnerChatID(ctx, auth.LatestChatID); err != nil {
+		return "", err
+	}
+	return auth.LatestChatID, nil
+}
+
+func (c *Coordinator) bindOwnerChatIfNeeded(ctx context.Context, chatID string, auth *model.TelegramUserAuth) error {
+	if strings.TrimSpace(c.cfg.OwnerChatID) != "" {
+		return nil
+	}
+	if c.requiresVerification() && (auth == nil || auth.VerifiedAt == nil) {
+		return nil
+	}
+	current, err := c.store.GetOwnerChatID(ctx)
+	if err != nil {
+		return err
+	}
+	if current == "" {
+		return c.store.SetOwnerChatID(ctx, chatID)
+	}
+	return nil
 }

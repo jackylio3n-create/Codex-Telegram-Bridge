@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"codextelegrambridge/internal/codex"
 	"codextelegrambridge/internal/config"
 	"codextelegrambridge/internal/model"
+	"codextelegrambridge/internal/policy"
 	"codextelegrambridge/internal/store"
 	"codextelegrambridge/internal/telegram"
 )
@@ -417,8 +420,8 @@ func TestCoordinatorNewSessionDefaultsToWorkspaceScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wait for session: %v", err)
 	}
-	if session.AccessScope != model.ScopeWorkspace {
-		t.Fatalf("expected new session to default to workspace scope, got %s", session.AccessScope)
+	if session.AccessScope != model.ScopeSystem {
+		t.Fatalf("expected new session to default to system scope, got %s", session.AccessScope)
 	}
 
 	cancel()
@@ -429,6 +432,85 @@ func TestCoordinatorNewSessionDefaultsToWorkspaceScope(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
+func TestCoordinatorIgnoresDuplicateFinalEditMessage(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		StateFilePath:                 filepath.Join(tempRoot, "app", "bridge-state.json"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		OwnerUserID:                   "1",
+		OwnerChatID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeStaticMessageCodex(t, "Final answer"),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	api := newFakeTelegramServer(t)
+	api.rejectDuplicateEdits = true
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	coordinator := NewCoordinator(cfg, logger, storeHandle, client)
+
+	api.PushUpdate(textUpdate(1, "/new"))
+	api.PushUpdate(textUpdate(2, "say hello"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	api.WaitForEditedMessage(t, "Final answer", 10*time.Second)
+	if _, err := waitForCurrentSessionState(t, storeHandle, model.RunIdle, 10*time.Second); err != nil {
+		t.Fatalf("wait for idle session: %v", err)
+	}
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+
+	if strings.Contains(logs.String(), "handle run finished failed") {
+		t.Fatalf("expected duplicate final edit to be ignored, got logs: %s", logs.String())
 	}
 }
 
@@ -488,7 +570,7 @@ func TestCoordinatorAllowsLanguageSelectionWithoutVerificationPassword(t *testin
 
 	picker := api.WaitForSentMessage(t, "Please choose your prompt language", 5*time.Second)
 	api.PushUpdate(callbackDataUpdate(401, picker.MessageID, "lang:zh"))
-	api.WaitForSentMessage(t, "语言已保存。现在可以使用 /new 开始聊天。", 5*time.Second)
+	api.WaitForSentMessage(t, "语言已保存", 5*time.Second)
 
 	auth, err := storeHandle.GetTelegramUserAuth(context.Background(), "1")
 	if err != nil {
@@ -509,14 +591,506 @@ func TestCoordinatorAllowsLanguageSelectionWithoutVerificationPassword(t *testin
 	}
 }
 
+func TestCoordinatorBindsVerifiedOwnerChatAndRejectsOtherChats(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	passwordHash, err := policy.HashPassword("secret-pass")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		StateFilePath:                 filepath.Join(tempRoot, "app", "bridge-state.json"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		VerificationPasswordHash:      passwordHash,
+		OwnerUserID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeFakeCodex(t),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	api := newFakeTelegramServer(t)
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	coordinator := NewCoordinator(cfg, testLogger(t), storeHandle, client)
+	api.PushUpdate(textUpdateInChat(500, 1, 1, "/start"))
+	api.PushUpdate(textUpdateInChat(501, 2, 1, "secret-pass"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	picker := api.WaitForSentMessage(t, "Please choose your prompt language", 5*time.Second)
+	api.PushUpdate(callbackDataUpdateInChat(502, 1, 1, picker.MessageID, "lang:zh"))
+	api.WaitForSentMessage(t, "语言已保存", 5*time.Second)
+
+	ownerChatID, err := storeHandle.GetOwnerChatID(context.Background())
+	if err != nil {
+		t.Fatalf("get owner chat id: %v", err)
+	}
+	if ownerChatID != "1" {
+		t.Fatalf("expected owner chat to be bound to 1, got %q", ownerChatID)
+	}
+
+	api.PushUpdate(textUpdateInChat(503, 2, 2, "/new"))
+	api.WaitForSentMessage(t, "This chat is not authorized for the bridge.", 5*time.Second)
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
+func TestCoordinatorRejectsApprovalCallbackBeforeVerification(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	passwordHash, err := policy.HashPassword("secret-pass")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		StateFilePath:                 filepath.Join(tempRoot, "app", "bridge-state.json"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		VerificationPasswordHash:      passwordHash,
+		OwnerUserID:                   "1",
+		OwnerChatID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeFakeCodex(t),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	session := model.Session{
+		SessionID:     "session-auth",
+		WorkspaceRoot: cfg.DefaultWorkspaceRoot,
+		CWD:           cfg.DefaultWorkspaceRoot,
+		Mode:          model.ModeCode,
+		AccessScope:   model.ScopeWorkspace,
+		RunState:      model.RunWaitingApproval,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := storeHandle.SaveSession(context.Background(), session); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if err := storeHandle.SetCurrentSessionID(context.Background(), session.SessionID); err != nil {
+		t.Fatalf("set current session: %v", err)
+	}
+	action := model.PendingAction{
+		ActionID:   "action-unverified",
+		ActionType: string(model.ActionApproval),
+		SessionID:  session.SessionID,
+		RunID:      "run-1",
+		ChatID:     "1",
+		UserID:     "1",
+		Payload: map[string]string{
+			"summary": "git status",
+		},
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	if err := storeHandle.CreatePendingAction(context.Background(), action); err != nil {
+		t.Fatalf("create pending action: %v", err)
+	}
+
+	api := newFakeTelegramServer(t)
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	coordinator := NewCoordinator(cfg, testLogger(t), storeHandle, client)
+	api.PushUpdate(callbackDataUpdateInChat(600, 1, 1, 700, "pa:"+action.ActionID))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	reloaded, err := storeHandle.GetPendingAction(context.Background(), action.ActionID)
+	if err != nil {
+		t.Fatalf("reload action: %v", err)
+	}
+	if reloaded == nil || reloaded.Resolved {
+		t.Fatalf("expected pending action to remain unresolved, got %#v", reloaded)
+	}
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
+func TestCoordinatorNoSessionInputShowsRecoveryCardAndCanCreateSession(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		StateFilePath:                 filepath.Join(tempRoot, "app", "bridge-state.json"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		OwnerUserID:                   "1",
+		OwnerChatID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeFakeCodex(t),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	api := newFakeTelegramServer(t)
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	coordinator := NewCoordinator(cfg, testLogger(t), storeHandle, client)
+	api.PushUpdate(textUpdate(700, "fix the build"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	recovery := api.WaitForSentMessage(t, "No session is selected.", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(701, recovery.MessageID, callbackNavNew))
+	session, err := waitForCurrentSessionState(t, storeHandle, model.RunIdle, 5*time.Second)
+	if err != nil {
+		t.Fatalf("wait for session: %v", err)
+	}
+	if session == nil {
+		t.Fatal("expected session to be created")
+	}
+	api.WaitForSentMessage(t, "Created and switched to", 5*time.Second)
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
+func TestCoordinatorCanSwitchSessionsFromRecentSessions(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		StateFilePath:                 filepath.Join(tempRoot, "app", "bridge-state.json"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		OwnerUserID:                   "1",
+		OwnerChatID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeFakeCodex(t),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	now := time.Now().UTC()
+	sessionA := model.Session{
+		SessionID:     "session-a",
+		WorkspaceRoot: cfg.DefaultWorkspaceRoot,
+		CWD:           filepath.Join(cfg.DefaultWorkspaceRoot, "api"),
+		Mode:          model.ModeCode,
+		AccessScope:   model.ScopeWorkspace,
+		RunState:      model.RunIdle,
+		CreatedAt:     now.Add(-time.Hour),
+		UpdatedAt:     now.Add(-time.Minute),
+	}
+	sessionB := model.Session{
+		SessionID:     "session-b",
+		WorkspaceRoot: cfg.DefaultWorkspaceRoot,
+		CWD:           filepath.Join(cfg.DefaultWorkspaceRoot, "worker"),
+		Mode:          model.ModePlan,
+		AccessScope:   model.ScopeSystem,
+		RunState:      model.RunIdle,
+		CreatedAt:     now.Add(-2 * time.Hour),
+		UpdatedAt:     now,
+	}
+	if err := storeHandle.SaveSession(context.Background(), sessionA); err != nil {
+		t.Fatalf("save session A: %v", err)
+	}
+	if err := storeHandle.SaveSession(context.Background(), sessionB); err != nil {
+		t.Fatalf("save session B: %v", err)
+	}
+	if err := storeHandle.SetCurrentSessionID(context.Background(), sessionA.SessionID); err != nil {
+		t.Fatalf("set current session: %v", err)
+	}
+
+	api := newFakeTelegramServer(t)
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	coordinator := NewCoordinator(cfg, testLogger(t), storeHandle, client)
+	api.PushUpdate(textUpdate(710, "/start"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	picker := api.WaitForSentMessage(t, "Please choose your prompt language", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(711, picker.MessageID, "lang:en"))
+	api.WaitForSentMessage(t, "Language saved.", 5*time.Second)
+	home := api.WaitForSentMessage(t, "Current session:", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(712, home.MessageID, callbackNavSessions))
+	list := api.WaitForSentMessage(t, "Recent sessions:", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(713, list.MessageID, "sess:switch:session-b"))
+
+	currentSessionID := waitForCurrentSessionIDValue(t, storeHandle, "session-b", 5*time.Second)
+	if currentSessionID != "session-b" {
+		t.Fatalf("expected current session to switch to session-b, got %q", currentSessionID)
+	}
+	api.WaitForSentMessage(t, "Switched to session-b.", 5*time.Second)
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
+func TestCoordinatorCallbackSettingsUpdateSessionAndThinkLevel(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	cfg := config.Config{
+		AppHome:                       filepath.Join(tempRoot, "app"),
+		DatabasePath:                  filepath.Join(tempRoot, "app", "bridge.db"),
+		LogFilePath:                   filepath.Join(tempRoot, "app", "bridge.log"),
+		PIDFilePath:                   filepath.Join(tempRoot, "app", "bridge.pid"),
+		StateFilePath:                 filepath.Join(tempRoot, "app", "bridge-state.json"),
+		TempDir:                       filepath.Join(tempRoot, "app", "tmp"),
+		CodexHome:                     filepath.Join(tempRoot, ".codex"),
+		TelegramBotToken:              "telegram-token",
+		OwnerUserID:                   "1",
+		OwnerChatID:                   "1",
+		DefaultWorkspaceRoot:          filepath.Join(tempRoot, "workspace"),
+		LogLevel:                      "info",
+		CodexExecutable:               writeFakeCodex(t),
+		ResolvedApprovalRetentionDays: 7,
+		ExpiredApprovalRetentionDays:  1,
+		MaxAuditRows:                  1000,
+	}
+	if err := cfg.EnsureDirectories(); err != nil {
+		t.Fatalf("ensure directories: %v", err)
+	}
+	if err := os.MkdirAll(cfg.DefaultWorkspaceRoot, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	storeHandle, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer storeHandle.Close()
+
+	session := model.Session{
+		SessionID:     "session-settings",
+		WorkspaceRoot: cfg.DefaultWorkspaceRoot,
+		CWD:           cfg.DefaultWorkspaceRoot,
+		Mode:          model.ModeCode,
+		AccessScope:   model.ScopeWorkspace,
+		RunState:      model.RunIdle,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := storeHandle.SaveSession(context.Background(), session); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if err := storeHandle.SetCurrentSessionID(context.Background(), session.SessionID); err != nil {
+		t.Fatalf("set current session: %v", err)
+	}
+
+	api := newFakeTelegramServer(t)
+	defer api.Close()
+
+	client := telegram.NewClientWithOptions(telegram.Options{
+		Token:       cfg.TelegramBotToken,
+		HTTPClient:  api.Server.Client(),
+		BaseURL:     api.Server.URL + "/bot" + cfg.TelegramBotToken,
+		FileBaseURL: api.Server.URL + "/file/bot" + cfg.TelegramBotToken,
+	})
+
+	coordinator := NewCoordinator(cfg, testLogger(t), storeHandle, client)
+	api.PushUpdate(textUpdate(720, "/start"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- coordinator.Run(ctx)
+	}()
+
+	picker := api.WaitForSentMessage(t, "Please choose your prompt language", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(721, picker.MessageID, "lang:en"))
+	api.WaitForSentMessage(t, "Language saved.", 5*time.Second)
+	home := api.WaitForSentMessage(t, "Current session:", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(722, home.MessageID, "mode:set:plan"))
+	api.WaitForSentMessage(t, "Mode updated to plan", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(723, home.MessageID, "scope:set:system"))
+	api.WaitForSentMessage(t, "Scope updated to system", 5*time.Second)
+	api.PushUpdate(callbackDataUpdate(724, home.MessageID, "think:set:high"))
+	api.WaitForSentMessage(t, "Updated think level to high.", 5*time.Second)
+
+	updated, err := storeHandle.GetCurrentSession(context.Background())
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if updated == nil || updated.Mode != model.ModePlan || updated.AccessScope != model.ScopeSystem {
+		t.Fatalf("unexpected session after callbacks: %#v", updated)
+	}
+	think, err := codex.ReadReasoningEffort(cfg.CodexHome)
+	if err != nil {
+		t.Fatalf("read think level: %v", err)
+	}
+	if think != "high" {
+		t.Fatalf("expected think level high, got %q", think)
+	}
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("coordinator returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for coordinator shutdown")
+	}
+}
+
 type fakeTelegramServer struct {
-	Server         *httptest.Server
-	mu             sync.Mutex
-	updates        []telegram.Update
-	retainUpdates  bool
-	sentMessages   []recordedMessage
-	editedMessages []recordedMessage
-	nextMessageID  int64
+	Server               *httptest.Server
+	mu                   sync.Mutex
+	updates              []telegram.Update
+	retainUpdates        bool
+	rejectDuplicateEdits bool
+	sentMessages         []recordedMessage
+	editedMessages       []recordedMessage
+	messageTextByID      map[int64]string
+	nextMessageID        int64
 }
 
 type recordedMessage struct {
@@ -527,7 +1101,10 @@ type recordedMessage struct {
 
 func newFakeTelegramServer(t *testing.T) *fakeTelegramServer {
 	t.Helper()
-	api := &fakeTelegramServer{nextMessageID: 500}
+	api := &fakeTelegramServer{
+		nextMessageID:   500,
+		messageTextByID: map[int64]string{},
+	}
 	api.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/getUpdates"):
@@ -539,6 +1116,7 @@ func newFakeTelegramServer(t *testing.T) *fakeTelegramServer {
 			message := api.createMessage(payload, 0)
 			api.mu.Lock()
 			api.sentMessages = append(api.sentMessages, message)
+			api.messageTextByID[message.MessageID] = message.Text
 			api.mu.Unlock()
 			api.respond(w, map[string]any{"ok": true, "result": map[string]any{
 				"message_id": message.MessageID,
@@ -554,7 +1132,18 @@ func newFakeTelegramServer(t *testing.T) *fakeTelegramServer {
 			messageID := int64(payloadNumber(payload["message_id"]))
 			message := api.createMessage(payload, messageID)
 			api.mu.Lock()
+			if api.rejectDuplicateEdits && api.messageTextByID[message.MessageID] == message.Text {
+				api.mu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				api.respond(w, map[string]any{
+					"ok":          false,
+					"error_code":  http.StatusBadRequest,
+					"description": "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message",
+				})
+				return
+			}
 			api.editedMessages = append(api.editedMessages, message)
+			api.messageTextByID[message.MessageID] = message.Text
 			api.mu.Unlock()
 			api.respond(w, map[string]any{"ok": true, "result": map[string]any{
 				"message_id": message.MessageID,
@@ -694,7 +1283,7 @@ func textUpdate(updateID int64, text string) telegram.Update {
 	return textUpdateWithMessageID(updateID, updateID, text)
 }
 
-func textUpdateWithMessageID(updateID, messageID int64, text string) telegram.Update {
+func textUpdateInChat(updateID, messageID, chatID int64, text string) telegram.Update {
 	return telegram.Update{
 		UpdateID: updateID,
 		Message: &telegram.Message{
@@ -702,12 +1291,16 @@ func textUpdateWithMessageID(updateID, messageID int64, text string) telegram.Up
 			Date:      1772766400 + updateID,
 			Text:      text,
 			Chat: telegram.Chat{
-				ID:   1,
+				ID:   chatID,
 				Type: "private",
 			},
 			From: &telegram.User{ID: 1},
 		},
 	}
+}
+
+func textUpdateWithMessageID(updateID, messageID int64, text string) telegram.Update {
+	return textUpdateInChat(updateID, messageID, 1, text)
 }
 
 func callbackUpdate(updateID, messageID int64, actionID string, approve bool) telegram.Update {
@@ -719,18 +1312,22 @@ func callbackUpdate(updateID, messageID int64, actionID string, approve bool) te
 }
 
 func callbackDataUpdate(updateID, messageID int64, data string) telegram.Update {
+	return callbackDataUpdateInChat(updateID, 1, 1, messageID, data)
+}
+
+func callbackDataUpdateInChat(updateID, userID, chatID, messageID int64, data string) telegram.Update {
 	return telegram.Update{
 		UpdateID: updateID,
 		CallbackQuery: &telegram.CallbackQuery{
 			ID:   fmt.Sprintf("callback-%d", updateID),
-			From: telegram.User{ID: 1},
+			From: telegram.User{ID: userID},
 			Data: data,
 			Message: &telegram.Message{
 				MessageID: messageID,
 				Date:      1772766400 + updateID,
 				Text:      "approval request",
 				Chat: telegram.Chat{
-					ID:   1,
+					ID:   chatID,
 					Type: "private",
 				},
 				From: &telegram.User{ID: 0},
@@ -774,6 +1371,27 @@ sleep 30
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
+	}
+	return path
+}
+
+func writeStaticMessageCodex(t *testing.T, message string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-codex-static.sh")
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("marshal static message: %v", err)
+	}
+	script := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+echo '{"type":"thread.started","thread_id":"thread-live"}'
+sleep 0.05
+echo '{"type":"agent_message","message":%s}'
+sleep 0.05
+`, string(encoded))
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write static fake codex: %v", err)
 	}
 	return path
 }
@@ -859,6 +1477,48 @@ func waitForSessionCount(t *testing.T, storeHandle *store.Store, expected int, t
 		t.Fatalf("list sessions after timeout: %v", err)
 	}
 	t.Fatalf("timed out waiting for %d sessions; got %d", expected, len(sessions))
+}
+
+func waitForCurrentSessionID(t *testing.T, storeHandle *store.Store, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sessionID, err := storeHandle.GetCurrentSessionID(context.Background())
+		if err != nil {
+			t.Fatalf("get current session id: %v", err)
+		}
+		if sessionID != "" {
+			return sessionID
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sessionID, err := storeHandle.GetCurrentSessionID(context.Background())
+	if err != nil {
+		t.Fatalf("get current session id after timeout: %v", err)
+	}
+	t.Fatalf("timed out waiting for current session id; got %q", sessionID)
+	return ""
+}
+
+func waitForCurrentSessionIDValue(t *testing.T, storeHandle *store.Store, expected string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sessionID, err := storeHandle.GetCurrentSessionID(context.Background())
+		if err != nil {
+			t.Fatalf("get current session id: %v", err)
+		}
+		if sessionID == expected {
+			return sessionID
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sessionID, err := storeHandle.GetCurrentSessionID(context.Background())
+	if err != nil {
+		t.Fatalf("get current session id after timeout: %v", err)
+	}
+	t.Fatalf("timed out waiting for current session id %q; got %q", expected, sessionID)
+	return ""
 }
 
 type storePendingAction = model.PendingAction

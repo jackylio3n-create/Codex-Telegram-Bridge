@@ -41,7 +41,16 @@ func Serve(ctx context.Context, cfg config.Config, options Options) error {
 		}
 	}
 
-	logFile, err := os.OpenFile(cfg.LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	logMaxSizeMB := cfg.LogMaxSizeMB
+	if logMaxSizeMB <= 0 {
+		logMaxSizeMB = 20
+	}
+	logMaxBackups := cfg.LogMaxBackups
+	if logMaxBackups <= 0 {
+		logMaxBackups = 5
+	}
+
+	logFile, err := newRotatingFileWriter(cfg.LogFilePath, int64(logMaxSizeMB)*1024*1024, logMaxBackups)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}

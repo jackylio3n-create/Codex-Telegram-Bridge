@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -178,7 +179,7 @@ func (c *Client) DownloadToTemp(ctx context.Context, fileID, preferredName, temp
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", nil, err
+		return "", nil, c.sanitizeError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -224,7 +225,7 @@ func (c *Client) call(ctx context.Context, method string, payload any, target an
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return c.sanitizeError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -266,6 +267,24 @@ func (c *Client) call(ctx context.Context, method string, payload any, target an
 		}
 	}
 	return nil
+}
+
+func (c *Client) sanitizeError(err error) error {
+	if err == nil || c.token == "" {
+		return err
+	}
+	message := strings.ReplaceAll(err.Error(), c.token, "[redacted]")
+	if message == err.Error() {
+		return err
+	}
+	return errors.New(message)
+}
+
+func IsMessageNotModifiedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
 }
 
 func clampMessage(text string) string {

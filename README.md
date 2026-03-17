@@ -127,8 +127,8 @@ systemctl status codex-telegram-bridge
 ### 基本使用流程
 
 1. 在 Telegram 私聊机器人。
-2. 发送 `/new` 创建会话。
+2. 发送 `/new` 创建会话，默认访问范围是 `system`。
 3. 用 `/cd` 切到项目目录。
 4. 直接发送自然语言需求，例如让 Codex 修 bug、改代码、跑测试、查看日志。
-5. 需要更大目录范围时，用 `/scope system`。
+5. 需要收窄到工作区范围时，用 `/scope workspace`。
 6. 需要查看当前状态时，用 `/stat`。

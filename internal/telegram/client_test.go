@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCallReturnsHTTPStatusErrors(t *testing.T) {
@@ -65,5 +66,28 @@ func TestDownloadToTempRejectsFailedDownloads(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "http 404") {
 		t.Fatalf("expected http status in error, got %v", err)
+	}
+}
+
+func TestCallRedactsTokenFromTransportErrors(t *testing.T) {
+	t.Parallel()
+
+	client := NewClientWithOptions(Options{
+		Token: "super-secret-token",
+		HTTPClient: &http.Client{
+			Timeout: 50 * time.Millisecond,
+		},
+		BaseURL: "http://127.0.0.1:1/botsuper-secret-token",
+	})
+
+	_, err := client.SendMessage(context.Background(), "1", "hello", nil)
+	if err == nil {
+		t.Fatal("expected sendMessage to fail")
+	}
+	if strings.Contains(err.Error(), "super-secret-token") {
+		t.Fatalf("expected token to be redacted, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("expected redacted marker in error, got %v", err)
 	}
 }

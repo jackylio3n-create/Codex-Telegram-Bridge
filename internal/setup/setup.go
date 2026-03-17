@@ -144,15 +144,20 @@ func resolveValues(existing map[string]string, options Options) (map[string]stri
 		return nil, err
 	}
 	values := map[string]string{
-		"CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT": firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT"], filepath.Join(home, "codex-workspaces", "main")),
-		"CODEX_TELEGRAM_BRIDGE_APP_HOME":               firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_APP_HOME"], filepath.Join(home, ".local", "share", "codex-telegram-bridge")),
-		"CODEX_TELEGRAM_BRIDGE_CODEX_HOME":             firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_HOME"], existing["CODEX_HOME"], filepath.Join(home, ".codex")),
-		"CODEX_TELEGRAM_BRIDGE_LOG_LEVEL":              firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"], "info"),
-		"CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY":  firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"], "never"),
-		"CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE":     firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"], "danger-full-access"),
-		"CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN":     existing["CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN"],
-		"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID": existing["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"],
-		"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID": existing["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID"],
+		"CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT":   firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_DEFAULT_WORKSPACE_ROOT"], filepath.Join(home, "codex-workspaces", "main")),
+		"CODEX_TELEGRAM_BRIDGE_APP_HOME":                 firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_APP_HOME"], filepath.Join(home, ".local", "share", "codex-telegram-bridge")),
+		"CODEX_TELEGRAM_BRIDGE_CODEX_HOME":               firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_HOME"], existing["CODEX_HOME"], filepath.Join(home, ".codex")),
+		"CODEX_TELEGRAM_BRIDGE_LOG_LEVEL":                firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"], "info"),
+		"CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY":    firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"], "never"),
+		"CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE":       firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"], "danger-full-access"),
+		"CODEX_TELEGRAM_BRIDGE_LOG_MAX_SIZE_MB":          firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_LOG_MAX_SIZE_MB"], "20"),
+		"CODEX_TELEGRAM_BRIDGE_LOG_MAX_BACKUPS":          firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_LOG_MAX_BACKUPS"], "5"),
+		"CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS":           firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS"], "1000"),
+		"CODEX_TELEGRAM_BRIDGE_MAX_SESSION_ROWS":         firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_MAX_SESSION_ROWS"], "100"),
+		"CODEX_TELEGRAM_BRIDGE_DB_VACUUM_INTERVAL_HOURS": firstNonEmpty(existing["CODEX_TELEGRAM_BRIDGE_DB_VACUUM_INTERVAL_HOURS"], "24"),
+		"CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN":       existing["CODEX_TELEGRAM_BRIDGE_TELEGRAM_BOT_TOKEN"],
+		"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID":   existing["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"],
+		"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID":   existing["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_CHAT_ID"],
 	}
 
 	applyOptionValues(values, options)
@@ -197,6 +202,11 @@ func buildEntries(existing map[string]string, values map[string]string) ([][2]st
 		[2]string{"CODEX_TELEGRAM_BRIDGE_LOG_LEVEL", values["CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"]},
 		[2]string{"CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY", values["CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"]},
 		[2]string{"CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE", values["CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_LOG_MAX_SIZE_MB", values["CODEX_TELEGRAM_BRIDGE_LOG_MAX_SIZE_MB"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_LOG_MAX_BACKUPS", values["CODEX_TELEGRAM_BRIDGE_LOG_MAX_BACKUPS"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS", values["CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_MAX_SESSION_ROWS", values["CODEX_TELEGRAM_BRIDGE_MAX_SESSION_ROWS"]},
+		[2]string{"CODEX_TELEGRAM_BRIDGE_DB_VACUUM_INTERVAL_HOURS", values["CODEX_TELEGRAM_BRIDGE_DB_VACUUM_INTERVAL_HOURS"]},
 	)
 	if value := strings.TrimSpace(values["CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID"]); value != "" {
 		entries = append(entries, [2]string{"CODEX_TELEGRAM_BRIDGE_OWNER_TELEGRAM_USER_ID", value})
@@ -246,6 +256,11 @@ func promptValues(values map[string]string) map[string]string {
 		{"Log level", "CODEX_TELEGRAM_BRIDGE_LOG_LEVEL"},
 		{"Approval policy", "CODEX_TELEGRAM_BRIDGE_CODEX_APPROVAL_POLICY"},
 		{"Sandbox mode", "CODEX_TELEGRAM_BRIDGE_CODEX_SANDBOX_MODE"},
+		{"Log max size (MB)", "CODEX_TELEGRAM_BRIDGE_LOG_MAX_SIZE_MB"},
+		{"Log max backups", "CODEX_TELEGRAM_BRIDGE_LOG_MAX_BACKUPS"},
+		{"Max audit rows", "CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS"},
+		{"Max session rows", "CODEX_TELEGRAM_BRIDGE_MAX_SESSION_ROWS"},
+		{"DB vacuum interval (hours)", "CODEX_TELEGRAM_BRIDGE_DB_VACUUM_INTERVAL_HOURS"},
 	}
 	for _, prompt := range prompts {
 		fmt.Printf("%s [%s]: ", prompt.label, values[prompt.key])

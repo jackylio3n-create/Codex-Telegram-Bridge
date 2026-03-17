@@ -455,6 +455,40 @@ WHERE audit_id NOT IN (
 	return err
 }
 
+func (s *Store) PruneSessions(ctx context.Context, currentSessionID string, maxSessionRows int) error {
+	if maxSessionRows <= 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx, `
+DELETE FROM sessions
+WHERE session_id IN (
+  SELECT session_id
+  FROM sessions
+  WHERE session_id <> ?
+    AND session_id NOT IN (
+      SELECT session_id
+      FROM pending_actions
+      WHERE resolved = 0
+    )
+  ORDER BY updated_at DESC, session_id DESC
+  LIMIT -1 OFFSET ?
+)
+`, currentSessionID, maxSessionRows)
+	return err
+}
+
+func (s *Store) Vacuum(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx, `VACUUM`)
+	return err
+}
+
 func (s *Store) applyMigrations(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -482,7 +516,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		}
 		if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
 			if shouldIgnoreMigrationError(migration.ID, err) {
-				if _, insertErr := tx.ExecContext(ctx, `INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)`, migration.ID, time.Now().UTC().Format(time.RFC3339)); insertErr != nil {
+				if _, insertErr := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)`, migration.ID, time.Now().UTC().Format(time.RFC3339)); insertErr != nil {
 					tx.Rollback()
 					return insertErr
 				}
@@ -494,7 +528,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 			tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", migration.ID, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)`, migration.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)`, migration.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -567,6 +601,8 @@ ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = ex
 func shouldIgnoreMigrationError(migrationID string, err error) bool {
 	message := strings.ToLower(err.Error())
 	switch migrationID {
+	case "0002_pending_permission_read_indexes":
+		return strings.Contains(message, "no such table") && strings.Contains(message, "pending_permissions")
 	case "0004_session_access_scope", "0006_telegram_user_language":
 		return strings.Contains(message, "duplicate column name")
 	default:
@@ -814,9 +850,17 @@ CREATE TABLE IF NOT EXISTS session_summaries (
 CREATE INDEX IF NOT EXISTS idx_session_summaries_session_created
   ON session_summaries (session_id, created_at DESC, summary_id DESC);
 `},
+	{ID: "0002_pending_permission_read_indexes", SQL: `
+CREATE INDEX IF NOT EXISTS idx_pending_permissions_session_resolved_created
+  ON pending_permissions (session_id, resolved, created_at DESC, permission_id ASC);
+`},
+	{ID: "0003_audit_log_session_event_created", SQL: `
+CREATE INDEX IF NOT EXISTS idx_audit_logs_session_event_created
+  ON audit_logs (session_id, event_type, created_at DESC, audit_id DESC);
+`},
 	{ID: "0004_session_access_scope", SQL: `
 ALTER TABLE sessions
-  ADD COLUMN access_scope TEXT NOT NULL DEFAULT 'workspace'
+  ADD COLUMN access_scope TEXT NOT NULL DEFAULT 'system'
   CHECK (access_scope IN ('workspace', 'system'));
 `},
 	{ID: "0005_telegram_user_auth", SQL: `

@@ -24,11 +24,19 @@ const (
 	envResolvedApprovalDays  = "CODEX_TELEGRAM_BRIDGE_RESOLVED_APPROVAL_RETENTION_DAYS"
 	envExpiredApprovalDays   = "CODEX_TELEGRAM_BRIDGE_EXPIRED_APPROVAL_RETENTION_DAYS"
 	envMaxAuditRows          = "CODEX_TELEGRAM_BRIDGE_MAX_AUDIT_ROWS"
+	envMaxSessionRows        = "CODEX_TELEGRAM_BRIDGE_MAX_SESSION_ROWS"
+	envLogMaxSizeMB          = "CODEX_TELEGRAM_BRIDGE_LOG_MAX_SIZE_MB"
+	envLogMaxBackups         = "CODEX_TELEGRAM_BRIDGE_LOG_MAX_BACKUPS"
+	envDBVacuumHours         = "CODEX_TELEGRAM_BRIDGE_DB_VACUUM_INTERVAL_HOURS"
 	defaultApprovalPolicy    = "never"
 	defaultSandboxMode       = "danger-full-access"
 	defaultResolvedRetention = 7
 	defaultExpiredRetention  = 1
 	defaultMaxAuditRows      = 1000
+	defaultMaxSessionRows    = 100
+	defaultLogMaxSizeMB      = 20
+	defaultLogMaxBackups     = 5
+	defaultDBVacuumHours     = 24
 )
 
 type Config struct {
@@ -51,6 +59,10 @@ type Config struct {
 	ResolvedApprovalRetentionDays int
 	ExpiredApprovalRetentionDays  int
 	MaxAuditRows                  int
+	MaxSessionRows                int
+	LogMaxSizeMB                  int
+	LogMaxBackups                 int
+	DBVacuumIntervalHours         int
 }
 
 func Load(explicitEnvFile string) (Config, error) {
@@ -107,6 +119,10 @@ func Load(explicitEnvFile string) (Config, error) {
 		ResolvedApprovalRetentionDays: readIntEnv(envResolvedApprovalDays, defaultResolvedRetention),
 		ExpiredApprovalRetentionDays:  readIntEnv(envExpiredApprovalDays, defaultExpiredRetention),
 		MaxAuditRows:                  readIntEnv(envMaxAuditRows, defaultMaxAuditRows),
+		MaxSessionRows:                readIntEnv(envMaxSessionRows, defaultMaxSessionRows),
+		LogMaxSizeMB:                  readIntEnv(envLogMaxSizeMB, defaultLogMaxSizeMB),
+		LogMaxBackups:                 readIntEnv(envLogMaxBackups, defaultLogMaxBackups),
+		DBVacuumIntervalHours:         readIntEnv(envDBVacuumHours, defaultDBVacuumHours),
 	}
 
 	if cfg.TelegramBotToken == "" {
